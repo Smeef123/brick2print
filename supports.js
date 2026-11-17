@@ -144,14 +144,15 @@ export function unsupportedArea(mesh) {
     have.add(k); fail++;
     failing.push(isl[c], isl[c + 1], isl[c + 2]); under.push(isl[c], isl[c + 1], isl[c + 2]);
   }
-  return { failMm2: fail * g * g + (isl.emptyGap ? EMPTY_GAP_PENALTY : 0), cells: cells.length / 3, failCells: fail, failing, under, emptyGap: isl.emptyGap };
+  return { failMm2: fail * g * g + (isl.emptyGap ? EMPTY_GAP_PENALTY : 0), cells: cells.length / 3, failCells: fail, failing, under, emptyGap: isl.emptyGap, layerCells: isl.layerCells };
 }
+const MAX_SLENDER = 2.5; // height : narrowest footprint side, for a turned part
 const EMPTY_GAP_PENALTY = 1e6; // a pose with a layer of nothing between solid layers can't be sliced at all
 
 // Slice the part at each layer's mid-height (LAYER_MM steps), fill each section
 // (even-odd scanlines on a FINE_MM grid) and report the cells of every region that
 // overlaps nothing in the layer below: [x, y, z] at the region's underside.
-const LAYER_MM = 0.2, FINE_MM = 0.1, MIN_ISLAND_CELLS = 4;
+const LAYER_MM = 0.2, FINE_MM = 0.1, MIN_ISLAND_CELLS = 4, MIN_LAYER_MM2 = 0.0;
 function islandStarts(verts, tris) {
   let min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
   for (let k = 0; k < verts.length; k += 3) for (let a = 0; a < 3; a++) { min[a] = Math.min(min[a], verts[k + a]); max[a] = Math.max(max[a], verts[k + a]); }
@@ -189,8 +190,10 @@ function islandStarts(verts, tris) {
         for (let i = i0; i <= i1; i++) occ[j * W + i] = 1;
       }
     }
-    let any = false;
-    for (let c = 0; c < occ.length; c++) if (occ[c]) { any = true; break; }
+    let cellsHere = 0;
+    for (let c = 0; c < occ.length; c++) cellsHere += occ[c];
+    (out.layerCells ??= []).push(cellsHere);
+    const any = cellsHere * f * f >= MIN_LAYER_MM2;   // less than this, the slicer drops the layer
     if (any) { if (emptyAfterSolid) out.emptyGap = true; seenSolid = true; } else if (seenSolid) emptyAfterSolid = true;
     if (prev && z > LAYER_MM) {
       const lab = new Int32Array(W * H);
@@ -351,6 +354,8 @@ export function autoSupport(mesh) {
   let best = null;
   for (const pose of POSES) {
     const pm = pose === POSES[0] ? mesh : posed(mesh, pose);
+    // a turned pose must stand steadily: no taller than MAX_SLENDER times its narrowest footprint side
+    if (pose !== POSES[0] && pm.size[2] > MAX_SLENDER * Math.min(pm.size[0], pm.size[1])) continue;
     const area = pose === POSES[0] ? up : unsupportedArea(pm);
     let m = pm, left = area, pillars = 0;
     if (area.failMm2 >= RULES.MIN_FAIL_MM2) {
@@ -358,7 +363,12 @@ export function autoSupport(mesh) {
       if (p.pillars) { pillars = p.pillars; m = reseat(p.mesh); left = unsupportedArea(m); }
     }
     const c = { pose, m, before: area.failMm2, left, pillars };
-    if (!best || c.left.failMm2 < best.left.failMm2 - 0.5 || (Math.abs(c.left.failMm2 - best.left.failMm2) <= 0.5 && c.pillars < best.pillars)) best = c;
+    // studs-up keeps clutch surfaces on the plate and up top, so a turn has to leave less than
+    // half of what studs-up (with its pillars) leaves, and studs-up has to need help at all
+    if (!best) best = c;
+    else if (best.pose === POSES[0] && best.left.failMm2 < RULES.MIN_FAIL_MM2) continue;
+    else if (c.left.failMm2 < Math.min(best.left.failMm2 - 0.5, best.pose === POSES[0] ? best.left.failMm2 * 0.5 : Infinity)) best = c;
+    else if (best.pose !== POSES[0] && Math.abs(c.left.failMm2 - best.left.failMm2) <= 0.5 && c.pillars < best.pillars) best = c;
   }
   const turned = best.pose !== POSES[0] ? `turned ${best.pose.name}` : 'studs up';
   let m = best.m, fins = 0, pillars = best.pillars, left = best.left;

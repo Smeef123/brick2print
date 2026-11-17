@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { LDrawLoader } from 'three/addons/loaders/LDrawLoader.js';
 import { COLORS } from './colors.js';
 import { autoSupport } from './supports.js';
+import { buildBed, showPlate } from './viewer.js';
 
 // raw.githubusercontent serves every file with CORS; jsDelivr refuses parts of this repo (over its 50 MB limit).
 const LIB = 'https://raw.githubusercontent.com/gkjohnson/ldraw-parts-library/master/complete/ldraw/';
@@ -221,11 +222,43 @@ function model3mf(objects, items, scale) {
   return s + '</build>\n</model>\n';
 }
 
-async function write3mf(zip, path, objects, items, scale) {
+// Lego print settings written into every plate, on top of a complete Bambu P1S/X1/P2S profile
+// (bambu/p1s-base.json: 0.20mm Standard, Generic PLA). Evidence for each value is in README.md.
+const LEGO_SETTINGS = Object.freeze({
+  wall_loops: '3',                          // walls and studs print solid (3-4 perimeters: Printpal)
+  wall_generator: 'arachne',                // even wall widths on thin features (Klemmbrick, 178 reviews)
+  wall_sequence: 'outer wall/inner wall',   // outer wall laid first, most precise (Klemmbrick)
+  seam_position: 'back',                    // seams off the clutch faces (Klemmbrick)
+  sparse_infill_density: '15%',             // MachineBlocks, Bambu default
+  brim_type: 'outer_only', brim_width: '5', // small footprints stay down and flat (Prusa blog, MikeMakess)
+  enable_support: '0',                      // Set2Print adds its own pillars and fins
+  // X-Y contour/hole compensation come from the user's fit test (sources disagree on direction)
+});
+let baseCfgP = null;
+async function projectSettings(layer, rgb) {
+  baseCfgP ??= fetch('bambu/p1s-base.json').then((r) => r.json());
+  const cfg = { ...(await baseCfgP), ...LEGO_SETTINGS };
+  cfg.layer_height = layer;
+  const fit = fitState();                  // from the fit test, 0 until the user reports a fit
+  cfg.xy_contour_compensation = fit.contour.toFixed(2);
+  cfg.xy_hole_compensation = fit.hole.toFixed(2);
+  cfg.print_settings_id = `Set2Print Lego ${layer}mm`;
+  cfg.filament_colour = ['#' + rgb.toUpperCase()];
+  cfg.different_settings_to_system = [Object.keys(LEGO_SETTINGS).concat('layer_height').join(';'), '', ''];
+  return JSON.stringify(cfg, null, 4);
+}
+
+async function write3mf(zip, path, objects, items, scale, settings) {
   const z = new JSZip();
   z.file('[Content_Types].xml', '<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/></Types>');
   z.file('_rels/.rels', '<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Target="/3D/3dmodel.model" Id="rel0" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/></Relationships>');
-  z.file('3D/3dmodel.model', model3mf(objects, items, scale));
+  let model = model3mf(objects, items, scale);
+  // marked as a Bambu Studio project so the slicer takes the embedded settings
+  if (settings) {
+    model = model.replace('<resources>', '<metadata name="Application">BambuStudio-02.09.01.70</metadata>\n<resources>');
+    z.file('Metadata/project_settings.config', settings);
+  }
+  z.file('3D/3dmodel.model', model);
   zip.file(path, await z.generateAsync({ type: 'uint8array', compression: 'DEFLATE' }));
 }
 
@@ -260,6 +293,7 @@ async function build() {
     const gap = parseFloat($('gap').value) || 12;
     const bed = parseFloat($('bed').value) || 256;
     const fins = $('fins').checked;
+    buildBed(bed); showPlate(null); $('platetabs').innerHTML = ''; $('viewnote').hidden = false;
     let src;
     if ($('tab-set').getAttribute('aria-selected') === 'true') {
       status('Looking up the set…');
@@ -295,6 +329,7 @@ async function build() {
     const zip = new JSZip();
     const base = slug(src.title) || 'set';
     let plateCount = 0;
+    const viewPlates = [];
     const byColour = new Map();
     for (const l of lines) if (l.geom) { if (!byColour.has(l.colour.name)) byColour.set(l.colour.name, []); byColour.get(l.colour.name).push(l); }
     for (const [colour, ls] of byColour) {
@@ -309,7 +344,10 @@ async function build() {
           return { obj: objIndex.get(key), cx: it.cx, cy: it.cy };
         });
         const tag = plates[p][0].oversize ? '-oversize' : '';
-        await write3mf(zip, `plates/${slug(colour)}-${p + 1}${tag}.3mf`, objs, placed, scale);
+        const rgb = ls[0].colour.rgb;
+        viewPlates.push({ name: `${colour} ${p + 1}`, rgb, scale, items: plates[p].map((it) => ({ mesh: it.line.geom.mesh, cx: it.cx, cy: it.cy })) });
+        const settings = bed === 256 ? await projectSettings($('layer').value, rgb) : null;
+        await write3mf(zip, `plates/${slug(colour)}-${p + 1}${tag}.3mf`, objs, placed, scale, settings);
         plateCount++; sum({ plates: plateCount });
         status(`Writing plates… ${plateCount}`);
       }
@@ -321,6 +359,7 @@ async function build() {
     const supNotes = [...new Map(lines.filter((l) => l.geom && l.geom.support && l.geom.support.note !== 'prints as is').map((l) => [l.geom.name, l.geom.support])).entries()];
     if (supNotes.length) zip.file('supports.txt', 'Parts turned or given fins automatically (slicer supports stay off):\n\n' + supNotes.map(([n, s]) => `${n}\t${s.note}\t(unsupported underside studs-up: ${s.before.toFixed(1)} mm2, left after supports: ${s.after.toFixed(1)} mm2)`).join('\n') + '\n');
     zip.file('README.txt', `Made with Set2Print from: ${src.title}\nScale ${Math.round(scale * 1000) / 10}%. Parts are studs-up unless supports.txt says otherwise, one 3MF per plate, named by colour.\nPrint with slicer supports OFF: overhangs were checked by geometry (bridges up to 20 mm, overhangs up to ~70 degrees) and given breakaway fins (Support Fins engine) where needed.\nPart geometry from the LDraw.org parts library (CC BY 2.0). Inventory and colours from Rebrickable.\n`);
+    renderPlateTabs(viewPlates);
     lastZip = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' });
     lastName = base + '-set2print.zip';
     $('dl').hidden = false;
@@ -340,6 +379,80 @@ function download() {
   setTimeout(() => URL.revokeObjectURL(a.href), 10000);
 }
 
+// ---------- fit test ----------
+// Print a 2x4 brick and a 2x4 plate with the current settings, try them on real bricks, then
+// report the fit. Studs are outer contours, so their fit moves X-Y contour compensation; the
+// hollow underside is a hole in every layer, so its fit moves X-Y hole compensation.
+const FIT_STEP = 0.05; // mm per report
+function fitState() {
+  try { const v = JSON.parse(store.get('s2p.fit') || '{}'); return { contour: +v.contour || 0, hole: +v.hole || 0, n: +v.n || 0 }; }
+  catch { return { contour: 0, hole: 0, n: 0 }; }
+}
+function showFit() {
+  const f = fitState();
+  $('fitnow').textContent = f.n
+    ? `Your fit: studs ${f.contour >= 0 ? '+' : ''}${f.contour.toFixed(2)} mm, underside ${f.hole >= 0 ? '+' : ''}${f.hole.toFixed(2)} mm (after ${f.n} report${f.n === 1 ? '' : 's'}). Used in every build.`
+    : 'Not tested yet: plates use 0 adjustment.';
+}
+function reportFit(part, verdict) {
+  const f = fitState();
+  // studs too tight -> shrink them (contour -); underside too tight -> widen the hollow (hole +)
+  if (part === 'studs') f.contour += verdict === 'tight' ? -FIT_STEP : verdict === 'loose' ? FIT_STEP : 0;
+  else f.hole += verdict === 'tight' ? FIT_STEP : verdict === 'loose' ? -FIT_STEP : 0;
+  f.contour = Math.max(-0.3, Math.min(0.3, Math.round(f.contour * 100) / 100));
+  f.hole = Math.max(-0.3, Math.min(0.3, Math.round(f.hole * 100) / 100));
+  f.n++;
+  store.set('s2p.fit', JSON.stringify(f));
+  showFit();
+  status(verdict === 'good' ? `Noted: the ${part === 'studs' ? 'studs fit' : 'underside fits'}.` : `Adjusted the ${part === 'studs' ? 'studs' : 'underside'} by ${FIT_STEP} mm. Print the fit test again to check.`);
+}
+
+async function buildFitTest() {
+  const btn = $('fit'); btn.disabled = true; $('dl').hidden = true; lastZip = null;
+  try {
+    status('Loading the test parts…');
+    const [brick, plate] = await Promise.all([loadPart('3001'), loadPart('3020')]);
+    if (!brick || !plate) throw new Error('The test parts could not be loaded. Check your connection and try again.');
+    const red = colourOf('4');
+    const scale = (parseFloat($('scale').value) || 100) / 100;
+    const objs = [{ label: '3001 Brick 2 x 4 (fit test)', mesh: brick.mesh }, { label: '3020 Plate 2 x 4 (fit test)', mesh: plate.mesh }];
+    const items = [{ obj: 1, cx: 108, cy: 128 }, { obj: 2, cx: 148, cy: 128 }];
+    const zip = new JSZip();
+    await write3mf(zip, 'fit-test.3mf', objs, items, scale, await projectSettings($('layer').value, red.rgb));
+    const f = fitState();
+    zip.file('HOW-TO-USE.txt', [
+      'Set2Print fit test: a 2x4 brick and a 2x4 plate with your current settings',
+      `(studs ${f.contour.toFixed(2)} mm, underside ${f.hole.toFixed(2)} mm, scale ${Math.round(scale * 1000) / 10}%).`,
+      '',
+      '1. Print it with the filament you will use for the set.',
+      '2. Studs: press a real brick onto the test brick.',
+      '3. Underside: press the test brick onto a real brick.',
+      '4. On Set2Print, tell it each one was too tight, just right or too loose.',
+      '   It adjusts the matching setting by 0.05 mm and uses it in every build. Repeat until both are just right.',
+    ].join('\n') + '\n');
+    lastZip = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' });
+    lastName = 'set2print-fit-test.zip';
+    renderPlateTabs([{ name: 'Fit test', rgb: red.rgb, scale, items: items.map((it) => ({ mesh: objs[it.obj - 1].mesh, cx: it.cx, cy: it.cy })) }]);
+    $('dl').hidden = false;
+    status('Fit test ready: about 20 minutes at 0.20 mm.');
+  } catch (e) { status(e.message || String(e)); } finally { btn.disabled = false; }
+}
+
+// plate tabs over the 3D view
+function renderPlateTabs(list) {
+  const nav = $('platetabs');
+  nav.innerHTML = '';
+  list.forEach((pl, i) => {
+    const btn = document.createElement('button');
+    btn.innerHTML = `<span class="sw" style="background:#${esc(pl.rgb)}"></span>${esc(pl.name)}`;
+    btn.setAttribute('aria-pressed', i === 0);
+    btn.onclick = () => { for (const b of nav.children) b.setAttribute('aria-pressed', b === btn); showPlate(pl); };
+    nav.appendChild(btn);
+  });
+  showPlate(list[0]);
+  $('viewnote').hidden = list.length > 0;
+}
+
 function selectTab(which) {
   const set = which === 'set';
   $('tab-set').setAttribute('aria-selected', set); $('tab-list').setAttribute('aria-selected', !set);
@@ -352,6 +465,11 @@ fetch('data/meta.json').then((r) => r.json()).then((m) => { $('datainfo').textCo
 $('tab-set').onclick = () => selectTab('set');
 $('tab-list').onclick = () => selectTab('list');
 $('go').onclick = build;
+$('fit').onclick = buildFitTest;
+for (const b of document.querySelectorAll('[data-fit]')) b.onclick = () => reportFit(b.dataset.part, b.dataset.fit);
+$('fitreset').onclick = () => { store.set('s2p.fit', ''); showFit(); status('Fit adjustments cleared.'); };
+showFit();
+$('bed').onchange = () => buildBed(parseFloat($('bed').value) || 256);
 $('dl').onclick = download;
 $('file').onchange = async (e) => { const f = e.target.files[0]; if (f) { $('listtext').value = await f.text(); } };
 const drop = $('drop');
