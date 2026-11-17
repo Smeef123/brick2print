@@ -14,9 +14,11 @@ Turn a brick set's parts list into ready-to-print 3MF plates, one batch per colo
 Print with slicer supports **off**. Set2Print decides supports by geometry:
 
 - A point on a part's underside prints as is if it lies on a straight path of at most **20 mm** between two pieces of material 0.3 mm below it (a bridge), or within **1 mm** of material below it (an overhang stepping out per layer, which allows slopes up to about 73° from vertical). These are the ordinary bands for PLA on a Bambu P-series printer.
+- The part is also sliced into 0.2 mm layers; any region that starts in mid-air (overlaps nothing in the layer below) fails too, however close it sits to a wall.
 - A part that fails studs-up is tried on each of its six sides, and the pose with the least unsupported area is used.
-- Anything still overhanging gets breakaway fins from the [Support Fins](https://printfins.com) engine (vendored unchanged in `vendor/support-fins`, MIT).
-- `supports.txt` in the download lists every part that was turned or finned, and anything left that still needs care.
+- Every spot that still fails gets a **breakaway pillar**: a column from the plate (or the part below) up to 0.2 mm short of the underside, kept 0.3 mm clear of the part's sides and at least 0.8 mm wide. This covers flat and curved undersides such as sideways studs.
+- Anything pillars can't reach gets breakaway fins from the [Support Fins](https://printfins.com) engine (vendored unchanged in `vendor/support-fins`, MIT).
+- `supports.txt` in the download lists every part that was turned, pillared or finned, and anything left that still needs care.
 
 ## Credits
 

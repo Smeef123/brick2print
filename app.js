@@ -311,7 +311,7 @@ async function build() {
     const notFound = lines.filter((l) => !l.geom);
     if (notFound.length) zip.file('not-found.txt', 'These parts are not in the LDraw library (often stickers, printed or rubber parts, or newer molds):\n\n' + notFound.map((l) => `${l.part}\t${l.colour.name}\tx${l.qty}\t${l.name || ''}`).join('\n') + '\n');
     const supNotes = [...new Map(lines.filter((l) => l.geom && l.geom.support && l.geom.support.note !== 'prints as is').map((l) => [l.geom.name, l.geom.support])).entries()];
-    if (supNotes.length) zip.file('supports.txt', 'Parts turned or given fins automatically (slicer supports stay off):\n\n' + supNotes.map(([n, s]) => `${n}\t${s.note}\t(unsupported before: ${s.before.toFixed(1)} mm2, after turning: ${s.after.toFixed(1)} mm2)`).join('\n') + '\n');
+    if (supNotes.length) zip.file('supports.txt', 'Parts turned or given fins automatically (slicer supports stay off):\n\n' + supNotes.map(([n, s]) => `${n}\t${s.note}\t(unsupported underside studs-up: ${s.before.toFixed(1)} mm2, left after supports: ${s.after.toFixed(1)} mm2)`).join('\n') + '\n');
     zip.file('README.txt', `Made with Set2Print from: ${src.title}\nScale ${Math.round(scale * 1000) / 10}%. Parts are studs-up unless supports.txt says otherwise, one 3MF per plate, named by colour.\nPrint with slicer supports OFF: overhangs were checked by geometry (bridges up to 20 mm, overhangs up to ~70 degrees) and given breakaway fins (Support Fins engine) where needed.\nPart geometry from the LDraw.org parts library (CC BY 2.0). Inventory and colours from Rebrickable.\n`);
     lastZip = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' });
     lastName = base + '-set2print.zip';
