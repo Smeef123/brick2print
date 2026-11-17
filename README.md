@@ -4,7 +4,8 @@ Turn a brick set's parts list into ready-to-print 3MF plates, one batch per colo
 
 **Use it:** https://smeef123.github.io/set2print/
 
-- Enter a set number with your own free Rebrickable API key, or paste/upload a parts list (`part, colour, quantity`; Rebrickable CSV exports work as they are).
+- Type a set number or part of its name: every official set is built in (no account or key), refreshed every Monday from Rebrickable's free database downloads by `scripts/build_data.py`. Minifigure parts are included.
+- Or paste/upload any parts list (`part, colour, quantity`; Rebrickable CSV exports work as they are).
 - Every part is fetched from the LDraw parts library, converted to millimetres, turned studs-up, and laid out on plates per colour (Bambu X1/P1 corner no-print zone avoided).
 - You download a ZIP: one 3MF per plate plus one STL per unique part, and a list of anything not found.
 - Everything runs in your browser. Nothing is uploaded.

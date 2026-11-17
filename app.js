@@ -7,7 +7,6 @@ import { autoSupport } from './supports.js';
 // raw.githubusercontent serves every file with CORS; jsDelivr refuses parts of this repo (over its 50 MB limit).
 const LIB = 'https://raw.githubusercontent.com/gkjohnson/ldraw-parts-library/master/complete/ldraw/';
 const LDU_MM = 0.4;            // 1 LDraw unit = 0.4 mm
-const API = 'https://rebrickable.com/api/v3/lego';
 const $ = (id) => document.getElementById(id);
 
 // ---------- small helpers ----------
@@ -30,35 +29,45 @@ function colourOf(c) {
 }
 
 // ---------- inputs ----------
-async function fromRebrickable(setNum, key, withSpares) {
-  if (!key) throw new Error('Add your Rebrickable API key, or switch to "Paste or upload a list".');
-  let set = setNum.trim();
-  if (!set) throw new Error('Enter a set number, for example 6000-1.');
-  if (!/-\d+$/.test(set)) set += '-1';
-  const head = { Authorization: 'key ' + key, Accept: 'application/json' };
-  const info = await fetch(`${API}/sets/${encodeURIComponent(set)}/`, { headers: head });
-  if (info.status === 401) throw new Error('Rebrickable refused the API key. Check it under Settings → API on rebrickable.com.');
-  if (info.status === 404) throw new Error(`Rebrickable has no set "${set}". Check the number on rebrickable.com.`);
-  if (!info.ok) throw new Error(`Rebrickable answered ${info.status}. Try again in a minute.`);
-  const meta = await info.json();
-  const out = [];
-  let url = `${API}/sets/${encodeURIComponent(set)}/parts/?page_size=1000&inc_part_details=1`;
-  while (url) {
-    await new Promise((r) => setTimeout(r, 1100)); // Rebrickable allows 1 request per second
-    const r = await fetch(url, { headers: head });
-    if (!r.ok) throw new Error(`Rebrickable answered ${r.status} while reading the parts list.`);
-    const j = await r.json();
-    for (const it of j.results) {
-      if (it.is_spare && !withSpares) continue;
-      const ld = it.part.external_ids && it.part.external_ids.LDraw;
-      out.push({
-        part: it.part.part_num, ldraw: (ld && ld[0]) || it.part.part_num, name: it.part.name,
-        colour: { id: String(it.color.id), name: it.color.name, rgb: it.color.rgb }, qty: it.quantity,
-      });
-    }
-    url = j.next;
+// Built-in set data (data/, rebuilt weekly from Rebrickable's free database downloads).
+let indexP = null;
+const loadIndex = () => (indexP ??= fetch('data/index.json').then((r) => { if (!r.ok) throw new Error('index'); return r.json(); }));
+const bucket = (sn) => sn.toLowerCase().slice(0, 3).replace(/[^a-z0-9]/g, '') || '_';
+
+// "6000", "6000-1", "75192" or a name like "millennium falcon" -> the set's number
+async function resolveSet(query) {
+  const q = query.trim();
+  if (!q) throw new Error('Type a set number (like 10696) or part of a set name.');
+  const index = await loadIndex().catch(() => { throw new Error('The set list could not be loaded. Check your connection and try again.'); });
+  const lower = q.toLowerCase();
+  const exact = index.find((r) => r[0].toLowerCase() === lower) || index.find((r) => r[0].toLowerCase() === lower + '-1');
+  if (exact) return exact[0];
+  const hits = index.filter((r) => r[1].toLowerCase().includes(lower));
+  if (!hits.length) throw new Error(`No set matches "${q}". Try the number printed on the box.`);
+  return hits[0][0]; // index is newest first
+}
+
+async function fromBuiltIn(query, withSpares) {
+  const sn = await resolveSet(query);
+  const r = await fetch(`data/sets/${bucket(sn)}.json`);
+  if (!r.ok) throw new Error('The set data could not be loaded. Try again in a minute.');
+  const set = (await r.json())[sn];
+  if (!set) throw new Error(`Set ${sn} has no parts list yet.`);
+  const lines = set.p.filter((row) => withSpares || !row[3]).map(([part, col, qty, , name]) => ({ part, ldraw: part, name, colour: colourOf(String(col)), qty }));
+  return { title: `${sn} ${set.n} (${set.y})`, lines };
+}
+
+// suggestions while typing
+async function suggest() {
+  const q = $('setnum').value.trim().toLowerCase();
+  if (q.length < 2) { $('setlist').innerHTML = ''; return; }
+  const index = await loadIndex().catch(() => []);
+  const hits = [];
+  for (const r of index) {
+    if (r[0].toLowerCase().startsWith(q) || r[1].toLowerCase().includes(q)) hits.push(r);
+    if (hits.length >= 12) break;
   }
-  return { title: `${meta.set_num} ${meta.name}`, lines: out };
+  $('setlist').innerHTML = hits.map((r) => `<option value="${esc(r[0])}">${esc(r[1])} (${r[2]}, ${r[3]} pieces)</option>`).join('');
 }
 
 function fromText(text, withSpares) {
@@ -253,9 +262,8 @@ async function build() {
     const fins = $('fins').checked;
     let src;
     if ($('tab-set').getAttribute('aria-selected') === 'true') {
-      store.set('s2p.key', $('apikey').value.trim());
-      status('Reading the parts list from Rebrickable…');
-      src = await fromRebrickable($('setnum').value, $('apikey').value.trim(), spares);
+      status('Looking up the set…');
+      src = await fromBuiltIn($('setnum').value, spares);
     } else {
       src = fromText($('listtext').value, spares);
     }
@@ -338,7 +346,9 @@ function selectTab(which) {
   $('pane-set').hidden = !set; $('pane-list').hidden = set;
 }
 
-$('apikey').value = store.get('s2p.key');
+$('setnum').value = store.get('s2p.set');
+$('setnum').oninput = () => { store.set('s2p.set', $('setnum').value); suggest(); };
+fetch('data/meta.json').then((r) => r.json()).then((m) => { $('datainfo').textContent = `${m.sets.toLocaleString()} sets, updated ${m.built}.`; }).catch(() => {});
 $('tab-set').onclick = () => selectTab('set');
 $('tab-list').onclick = () => selectTab('list');
 $('go').onclick = build;

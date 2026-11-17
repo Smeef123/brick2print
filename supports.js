@@ -103,7 +103,6 @@ export function unsupportedArea(mesh) {
   const { verts, tris } = mesh;
   const { CELL_MM: g, PROBE_MM, BRIDGE_MM, CANTILEVER_MM } = RULES;
   const cells = ceilingCells(verts, tris);
-  if (!cells.length) return { failMm2: 0, cells: 0, failCells: 0, failing: [], under: [] };
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (let k = 0; k < verts.length; k += 3) { minX = Math.min(minX, verts[k]); maxX = Math.max(maxX, verts[k]); minY = Math.min(minY, verts[k + 1]); maxY = Math.max(maxY, verts[k + 1]); }
   const box = { i0: Math.floor(minX / g) - 2, j0: Math.floor(minY / g) - 2 };
@@ -145,8 +144,9 @@ export function unsupportedArea(mesh) {
     have.add(k); fail++;
     failing.push(isl[c], isl[c + 1], isl[c + 2]); under.push(isl[c], isl[c + 1], isl[c + 2]);
   }
-  return { failMm2: fail * g * g, cells: cells.length / 3, failCells: fail, failing, under };
+  return { failMm2: fail * g * g + (isl.emptyGap ? EMPTY_GAP_PENALTY : 0), cells: cells.length / 3, failCells: fail, failing, under, emptyGap: isl.emptyGap };
 }
+const EMPTY_GAP_PENALTY = 1e6; // a pose with a layer of nothing between solid layers can't be sliced at all
 
 // Slice the part at each layer's mid-height (LAYER_MM steps), fill each section
 // (even-odd scanlines on a FINE_MM grid) and report the cells of every region that
@@ -158,7 +158,8 @@ function islandStarts(verts, tris) {
   const f = FINE_MM, x0 = min[0] - f, y0 = min[1] - f;
   const W = Math.ceil((max[0] - x0) / f) + 2, H = Math.ceil((max[1] - y0) / f) + 2;
   const nt = tris.length / 3, out = [];
-  let prev = null;
+  let prev = null, seenSolid = false, emptyAfterSolid = false;
+  out.emptyGap = false;   // a layer with nothing in it between solid layers: the slicer refuses that
   for (let z = LAYER_MM / 2; z < max[2]; z += LAYER_MM) {
     // segments of this section
     const seg = [];
@@ -188,6 +189,9 @@ function islandStarts(verts, tris) {
         for (let i = i0; i <= i1; i++) occ[j * W + i] = 1;
       }
     }
+    let any = false;
+    for (let c = 0; c < occ.length; c++) if (occ[c]) { any = true; break; }
+    if (any) { if (emptyAfterSolid) out.emptyGap = true; seenSolid = true; } else if (seenSolid) emptyAfterSolid = true;
     if (prev && z > LAYER_MM) {
       const lab = new Int32Array(W * H);
       let id = 0;
@@ -342,20 +346,23 @@ export function posed(mesh, pose) {
 export function autoSupport(mesh) {
   const up = unsupportedArea(mesh);
   if (up.failMm2 < RULES.MIN_FAIL_MM2) return { mesh, pose: 'studs up', before: up.failMm2, after: up.failMm2, fins: 0, pillars: 0, unserved: 0, note: 'prints as is' };
-  let best = { pose: POSES[0], m: mesh, area: up.failMm2 };
-  for (const pose of POSES.slice(1)) {
-    const m = posed(mesh, pose);
-    const a = unsupportedArea(m).failMm2;
-    if (a < best.area - 0.5 || (Math.abs(a - best.area) <= 0.5 && m.size[2] < best.m.size[2])) best = { pose, m, area: a };
+  // Every pose is judged by what is left after its pillars, so turning only wins when
+  // it really ends better; studs-up wins ties, then fewer pillars.
+  let best = null;
+  for (const pose of POSES) {
+    const pm = pose === POSES[0] ? mesh : posed(mesh, pose);
+    const area = pose === POSES[0] ? up : unsupportedArea(pm);
+    let m = pm, left = area, pillars = 0;
+    if (area.failMm2 >= RULES.MIN_FAIL_MM2) {
+      const p = addPillars(pm, area.failing, area.under);
+      if (p.pillars) { pillars = p.pillars; m = reseat(p.mesh); left = unsupportedArea(m); }
+    }
+    const c = { pose, m, before: area.failMm2, left, pillars };
+    if (!best || c.left.failMm2 < best.left.failMm2 - 0.5 || (Math.abs(c.left.failMm2 - best.left.failMm2) <= 0.5 && c.pillars < best.pillars)) best = c;
   }
   const turned = best.pose !== POSES[0] ? `turned ${best.pose.name}` : 'studs up';
-  if (best.area < RULES.MIN_FAIL_MM2) return { mesh: best.m, pose: best.pose.name, before: up.failMm2, after: best.area, fins: 0, pillars: 0, unserved: 0, note: `${turned} so it needs no support` };
-
-  // 1. pillars under every spot the rule fails: they hold flat and curved undersides alike
-  let m = best.m, fins = 0, pillars = 0;
-  let left = unsupportedArea(m);
-  const p = addPillars(m, left.failing, left.under);
-  if (p.pillars) { pillars = p.pillars; m = reseat(p.mesh); left = unsupportedArea(m); }
+  let m = best.m, fins = 0, pillars = best.pillars, left = best.left;
+  if (!pillars && left.failMm2 < RULES.MIN_FAIL_MM2) return { mesh: m, pose: best.pose.name, before: up.failMm2, after: left.failMm2, fins: 0, pillars: 0, unserved: 0, note: `${turned} so it needs no support` };
 
   // 2. what pillars could not reach (too close to the part's sides): fins from the
   //    Support Fins engine (threshold 30 deg from the plate = 60 from vertical)
@@ -372,8 +379,9 @@ export function autoSupport(mesh) {
   const parts = [turned];
   if (pillars) parts.push(`${pillars} pillar${pillars === 1 ? '' : 's'}`);
   if (fins) parts.push(`${fins} fin${fins === 1 ? '' : 's'}`);
-  if (unserved) parts.push(`${left.failMm2.toFixed(1)} mm² still unsupported`);
-  return { mesh: m, pose: best.pose.name, before: up.failMm2, after: left.failMm2, fins, pillars, unserved, note: parts.join(', ') };
+  if (left.emptyGap) parts.push('a loose piece the slicer will refuse');
+  else if (unserved) parts.push(`${left.failMm2.toFixed(1)} mm² still unsupported`);
+  return { mesh: m, pose: best.pose.name, before: Math.min(up.failMm2, EMPTY_GAP_PENALTY), after: left.emptyGap ? left.failMm2 - EMPTY_GAP_PENALTY : left.failMm2, fins, pillars, unserved, note: parts.join(', ') };
 }
 
 // fin_world = fin_seated - offset; append to the part's mesh (the slicer unions them)

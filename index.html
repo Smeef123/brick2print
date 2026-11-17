@@ -83,13 +83,13 @@ footer a{color:inherit}
   <section class="card" aria-labelledby="src-h">
     <h2 id="src-h">1 · Parts list</h2>
     <div class="tabs" role="tablist">
-      <button role="tab" id="tab-set" aria-selected="true" aria-controls="pane-set">Set number</button>
+      <button role="tab" id="tab-set" aria-selected="true" aria-controls="pane-set">Find a set</button>
       <button role="tab" id="tab-list" aria-selected="false" aria-controls="pane-list">Paste or upload a list</button>
     </div>
     <div id="pane-set" role="tabpanel" aria-labelledby="tab-set" class="row">
-      <label class="narrow">Set number<input id="setnum" type="text" placeholder="6000-1" autocomplete="off"></label>
-      <label class="grow">Rebrickable API key<input id="apikey" type="password" placeholder="Paste your key" autocomplete="off"></label>
-      <p class="hint" style="flex-basis:100%">A free key from <a href="https://rebrickable.com/users/profile/" target="_blank" rel="noopener">your Rebrickable profile</a> → Settings → API. It stays in this browser.</p>
+      <label class="grow">Set number or name<input id="setnum" type="text" list="setlist" placeholder="10696 or classic space" autocomplete="off"></label>
+      <datalist id="setlist"></datalist>
+      <p class="hint" style="flex-basis:100%">Every official set is built in. <span id="datainfo"></span></p>
     </div>
     <div id="pane-list" role="tabpanel" aria-labelledby="tab-list" hidden>
       <div style="display:grid;gap:10px">
