@@ -1,7 +1,7 @@
 // Set2Print: parts list -> LDraw geometry -> studs-up meshes in mm -> plates per colour -> 3MF + STL zip.
 import { COLORS } from './colors.js';
 import { loadPart } from './parts.js';
-import { settingsJson, write3mf as write3mfWith, stl } from './export3mf.js';
+import { multiFilamentSettings, projectFile, stl } from './export3mf.js';
 import { autoSupport } from './supports.js';
 import { buildBed, showPlate } from './viewer.js';
 
@@ -140,15 +140,18 @@ function pack(items, bed, gap, margin = 8) {
 }
 
 // ---------- writers (export3mf.js) ----------
-let baseCfgP = null;
-async function projectSettings(layer, rgb) {
+let baseCfgP = null, filKeysP = null;
+// One Bambu Studio project: the P1S/X1/P2S profile with the Lego values, one filament per colour.
+async function projectSettings(layer, rgbs, bed) {
   baseCfgP ??= fetch('bambu/p1s-base.json').then((r) => r.json());
-  return settingsJson(await baseCfgP, layer, rgb, fitState());
+  filKeysP ??= fetch('bambu/filament-keys.json').then((r) => r.json());
+  const cfg = JSON.parse(multiFilamentSettings(await baseCfgP, await filKeysP, layer, rgbs, fitState()));
+  if (bed !== 256) cfg.printable_area = ['0x0', `${bed}x0`, `${bed}x${bed}`, `0x${bed}`];
+  return JSON.stringify(cfg, null, 4);
 }
-const write3mf = (zip, path, objects, items, scale, settings) => write3mfWith(JSZip, zip, path, objects, items, scale, settings);
 
 // ---------- UI ----------
-let lastZip = null, lastName = 'set2print.zip';
+let lastFile = null, lastName = 'set2print.3mf', lastExtras = null, lastExtrasName = '';
 
 function render(lines) {
   $('rows').innerHTML = lines.map((l, i) => `<tr id="r${i}"><td class="mono">${esc(l.part)}</td><td class="name">${esc(l.name || '')}</td>` +
@@ -159,7 +162,7 @@ const sum = (o) => { for (const [k, v] of Object.entries(o)) $('s-' + k).textCon
 
 async function build() {
   const btn = $('go');
-  btn.disabled = true; $('dl').hidden = true; lastZip = null;
+  btn.disabled = true; $('dl').hidden = true; $('dlx').hidden = true; lastFile = lastExtras = null;
   try {
     const spares = $('spares').checked;
     const scale = (parseFloat($('scale').value) || 100) / 100;
@@ -202,7 +205,7 @@ async function build() {
     const zip = new JSZip();
     const base = slug(src.title) || 'set';
     let plateCount = 0;
-    const viewPlates = [];
+    const viewPlates = [], projectPlates = [], colourRgbs = [];
     const byColour = new Map();
     // parts wider than the bed (minus its edge margins) can't be printed whole: report them, don't ship a broken plate
     const tooBig = [];
@@ -213,21 +216,15 @@ async function build() {
       byColour.get(l.colour.name).push(l);
     }
     for (const [colour, ls] of byColour) {
+      colourRgbs.push(ls[0].colour.rgb);
+      const filament = colourRgbs.length;
       const items = [];
       for (const l of ls) for (let q = 0; q < l.qty; q++) items.push({ line: l, w: l.geom.mesh.size[0] * scale, h: l.geom.mesh.size[1] * scale });
       const plates = pack(items, bed, gap);
       for (let p = 0; p < plates.length; p++) {
-        const objs = [], objIndex = new Map();
-        const placed = plates[p].map((it) => {
-          const key = it.line.geom.name;
-          if (!objIndex.has(key)) { objIndex.set(key, objs.length + 1); objs.push({ label: `${key} ${it.line.name || ''}`.trim(), mesh: it.line.geom.mesh }); }
-          return { obj: objIndex.get(key), cx: it.cx, cy: it.cy };
-        });
-        const tag = plates[p][0].oversize ? '-oversize' : '';
         const rgb = ls[0].colour.rgb;
         viewPlates.push({ name: `${colour} ${p + 1}`, rgb, scale, items: plates[p].map((it) => ({ mesh: it.line.geom.mesh, cx: it.cx, cy: it.cy })) });
-        const settings = bed === 256 ? await projectSettings($('layer').value, rgb) : null;
-        await write3mf(zip, `plates/${slug(colour)}-${p + 1}${tag}.3mf`, objs, placed, scale, settings);
+        projectPlates.push({ name: `${colour} ${p + 1}`, filament, items: plates[p].map((it) => ({ key: it.line.geom.name, label: `${it.line.geom.name} ${it.line.name || ''}`.trim(), mesh: it.line.geom.mesh, cx: it.cx, cy: it.cy })) });
         plateCount++; sum({ plates: plateCount });
         status(`Writing plates… ${plateCount}`);
       }
@@ -241,9 +238,15 @@ async function build() {
     if (supNotes.length) zip.file('supports.txt', 'Parts turned or given fins automatically (slicer supports stay off):\n\n' + supNotes.map(([n, s]) => `${n}\t${s.note}\t(unsupported underside studs-up: ${s.before.toFixed(1)} mm2, left after supports: ${s.after.toFixed(1)} mm2)`).join('\n') + '\n');
     zip.file('README.txt', `Made with Set2Print from: ${src.title}\nScale ${Math.round(scale * 1000) / 10}%. Parts are studs-up unless supports.txt says otherwise, one 3MF per plate, named by colour.\nPrint with slicer supports OFF: overhangs were checked by geometry (bridges up to 20 mm, overhangs up to ~70 degrees) and given breakaway fins (Support Fins engine) where needed.\nPart geometry from the LDraw.org parts library (CC BY 2.0). Inventory and colours from Rebrickable.\n`);
     renderPlateTabs(viewPlates);
-    lastZip = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' });
-    lastName = base + '-set2print.zip';
-    $('dl').hidden = false;
+    if (projectPlates.length) {
+      status('Writing the Bambu Studio project…');
+      lastFile = new Blob([await projectFile(JSZip, projectPlates, await projectSettings($('layer').value, colourRgbs, bed), bed, scale)], { type: 'model/3mf' });
+      lastName = base + '.3mf';
+      $('dl').hidden = false;
+    }
+    lastExtras = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' });
+    lastExtrasName = base + '-stl-and-notes.zip';
+    $('dlx').hidden = false;
     status(`Done: ${plateCount} plates${missing ? `, ${missing} line(s) not found (listed in not-found.txt)` : ''}.`);
   } catch (e) {
     status(e.message || String(e));
@@ -252,10 +255,10 @@ async function build() {
   }
 }
 
-function download() {
-  if (!lastZip) return;
+function save(blob, name) {
+  if (!blob) return;
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(lastZip); a.download = lastName;
+  a.href = URL.createObjectURL(blob); a.download = name;
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 10000);
 }
@@ -289,7 +292,7 @@ function reportFit(part, verdict) {
 }
 
 async function buildFitTest() {
-  const btn = $('fit'); btn.disabled = true; $('dl').hidden = true; lastZip = null;
+  const btn = $('fit'); btn.disabled = true; $('dl').hidden = true; $('dlx').hidden = true; lastFile = lastExtras = null;
   try {
     status('Loading the test parts…');
     const [brick, plate] = await Promise.all([loadPart('3001'), loadPart('3020')]);
@@ -298,21 +301,9 @@ async function buildFitTest() {
     const scale = (parseFloat($('scale').value) || 100) / 100;
     const objs = [{ label: '3001 Brick 2 x 4 (fit test)', mesh: brick.mesh }, { label: '3020 Plate 2 x 4 (fit test)', mesh: plate.mesh }];
     const items = [{ obj: 1, cx: 108, cy: 128 }, { obj: 2, cx: 148, cy: 128 }];
-    const zip = new JSZip();
-    await write3mf(zip, 'fit-test.3mf', objs, items, scale, await projectSettings($('layer').value, red.rgb));
-    const f = fitState();
-    zip.file('HOW-TO-USE.txt', [
-      'Set2Print fit test: a 2x4 brick and a 2x4 plate with your current settings',
-      `(studs ${f.contour.toFixed(2)} mm, underside ${f.hole.toFixed(2)} mm, scale ${Math.round(scale * 1000) / 10}%).`,
-      '',
-      '1. Print it with the filament you will use for the set.',
-      '2. Studs: press a real brick onto the test brick.',
-      '3. Underside: press the test brick onto a real brick.',
-      '4. On Set2Print, tell it each one was too tight, just right or too loose.',
-      '   It adjusts the matching setting by 0.05 mm and uses it in every build. Repeat until both are just right.',
-    ].join('\n') + '\n');
-    lastZip = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' });
-    lastName = 'set2print-fit-test.zip';
+    const pl = [{ name: 'Fit test', filament: 1, items: items.map((it) => ({ key: objs[it.obj - 1].label, label: objs[it.obj - 1].label, mesh: objs[it.obj - 1].mesh, cx: it.cx, cy: it.cy })) }];
+    lastFile = new Blob([await projectFile(JSZip, pl, await projectSettings($('layer').value, [red.rgb], 256), 256, scale)], { type: 'model/3mf' });
+    lastName = 'set2print-fit-test.3mf';
     renderPlateTabs([{ name: 'Fit test', rgb: red.rgb, scale, items: items.map((it) => ({ mesh: objs[it.obj - 1].mesh, cx: it.cx, cy: it.cy })) }]);
     $('dl').hidden = false;
     status('Fit test ready: about 20 minutes at 0.20 mm.');
@@ -351,7 +342,8 @@ for (const b of document.querySelectorAll('[data-fit]')) b.onclick = () => repor
 $('fitreset').onclick = () => { store.set('s2p.fit', ''); showFit(); status('Fit adjustments cleared.'); };
 showFit();
 $('bed').onchange = () => buildBed(parseFloat($('bed').value) || 256);
-$('dl').onclick = download;
+$('dl').onclick = () => save(lastFile, lastName);
+$('dlx').onclick = () => save(lastExtras, lastExtrasName);
 $('file').onchange = async (e) => { const f = e.target.files[0]; if (f) { $('listtext').value = await f.text(); } };
 const drop = $('drop');
 drop.ondragover = (e) => { e.preventDefault(); drop.classList.add('over'); };
@@ -359,4 +351,4 @@ drop.ondragleave = () => drop.classList.remove('over');
 drop.ondrop = async (e) => { e.preventDefault(); drop.classList.remove('over'); const f = e.dataTransfer.files[0]; if (f) $('listtext').value = await f.text(); };
 
 // test hook: lets an automated check run the whole pipeline without clicks
-window.set2print = { fromText, loadPart, pack, build, supported, get zip() { return lastZip; } };
+window.set2print = { fromText, loadPart, pack, build, supported, get file() { return lastFile; }, get zip() { return lastExtras; } };
