@@ -6,7 +6,44 @@ import { LDrawLoader } from 'three/addons/loaders/LDrawLoader.js';
 let LIB = 'https://raw.githubusercontent.com/gkjohnson/ldraw-parts-library/master/complete/ldraw/';
 const LDU_MM = 0.4;            // 1 LDraw unit = 0.4 mm
 
+// ---- print-accurate studs and tubes ----
+// LDraw is drawn for screens: its stud is a 16-sided cylinder (4.71 mm across the flats, LEGO 4.80)
+// and its underside tube is 6.40 mm across (LEGO 6.51). Printed, those don't clutch at all. Every
+// part builds its studs and tubes from two shared primitives, so those two are replaced here with
+// 96-sided cylinders whose flats sit at LEGO's sizes. LDraw units: 1 LDU = 0.4 mm, -Y is up.
+const SEGS = 96, FLAT = 1 / Math.cos(Math.PI / SEGS);   // corner radius that puts the flats on size
+const STUD_R = (2.4 / LDU_MM) * FLAT, TUBE_R = (3.255 / LDU_MM) * FLAT, TUBE_HOLE_R = (2.4 / LDU_MM) * FLAT;
+function ring(r, y) { return Array.from({ length: SEGS }, (_, k) => [r * Math.cos((2 * Math.PI * k) / SEGS), y, r * Math.sin((2 * Math.PI * k) / SEGS)]); }
+const P = (p) => p.map((v) => +v.toFixed(4)).join(' ');
+// type-4 quads / type-3 triangles, wound counter-clockwise seen from outside (BFC CERTIFY CCW)
+function studDat() {
+  const lo = ring(STUD_R, 0), hi = ring(STUD_R, -4), out = ['0 Set2Print print-accurate stud', '0 BFC CERTIFY CCW'];
+  for (let k = 0; k < SEGS; k++) {
+    const k2 = (k + 1) % SEGS;
+    out.push(`4 16 ${P(lo[k])} ${P(hi[k])} ${P(hi[k2])} ${P(lo[k2])}`);   // side
+    out.push(`3 16 0 -4 0 ${P(hi[k2])} ${P(hi[k])}`);                       // top, facing up (-Y)
+  }
+  return out.join('\n') + '\n';
+}
+function tubeDat() {
+  const oLo = ring(TUBE_R, 0), oHi = ring(TUBE_R, -4), iLo = ring(TUBE_HOLE_R, 0), iHi = ring(TUBE_HOLE_R, -4);
+  const out = ['0 Set2Print print-accurate underside tube', '0 BFC CERTIFY CCW'];
+  for (let k = 0; k < SEGS; k++) {
+    const k2 = (k + 1) % SEGS;
+    out.push(`4 16 ${P(oLo[k])} ${P(oHi[k])} ${P(oHi[k2])} ${P(oLo[k2])}`);   // outer wall, facing out
+    out.push(`4 16 ${P(iLo[k2])} ${P(iHi[k2])} ${P(iHi[k])} ${P(iLo[k])}`);   // inner wall, facing the hole
+    out.push(`4 16 ${P(oLo[k2])} ${P(iLo[k2])} ${P(iLo[k])} ${P(oLo[k])}`);   // bottom ring, facing down (+Y)
+    out.push(`4 16 ${P(oHi[k])} ${P(iHi[k])} ${P(iHi[k2])} ${P(oHi[k2])}`);   // top ring (inside the part)
+  }
+  return out.join('\n') + '\n';
+}
+const PRINT_PRIMITIVES = { 'stud.dat': studDat(), 'stud4.dat': tubeDat() };
+const dataUrl = (text) => 'data:text/plain;charset=utf-8,' + encodeURIComponent(text);
 const loader = new LDrawLoader();
+loader.manager.setURLModifier((url) => {
+  const m = /\/(?:parts|p)\/(stud4?\.dat)$/i.exec(url);
+  return m ? dataUrl(PRINT_PRIMITIVES[m[1].toLowerCase()]) : url;
+});
 loader.setPartsLibraryPath(LIB);
 
 /** Point at another copy of the LDraw library (the audit uses a local one). */
