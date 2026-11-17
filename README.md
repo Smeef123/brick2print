@@ -29,7 +29,8 @@ Plates for 256 mm beds (Bambu P1S, P1P, X1, P2S) carry a complete Bambu Studio p
 | Setting | Value | Evidence |
 |---|---|---|
 | Orientation | studs up, hollow side on the plate, no slicer supports | [Prusa blog](https://blog.prusa3d.com/how-to-make-3d-printed-lego-and-lego-duplo-parts_31741/), [MachineBlocks](https://machineblocks.com/docs/get-started), [Brickset test](https://brickset.com/article/128767/can-you-make-compatible-bricks-with-consumer-3d-printers), MikeMakess (P1S, YouTube) |
-| Brim | outer only, 5 mm | Prusa blog (small footprints detach), MikeMakess (thin plates warp) |
+| Brim | none | the user's fit test: a brim was hard to remove and left a lip at the base |
+| Studs | 4.90 mm across, 1.3 mm tall (LDraw's 16-sided 4.71 x 1.6 mm studs replaced; tubes 6.51 mm) | printed studs must be oversize: MachineBlocks 5.00, LEGO.scad presets 4.94-5.03, brickify 4.85, OpenSCADLEGO ~5.09; hollows need room above studs: MachineBlocks +0.6 mm, brickify +0.2 mm |
 | Layer height | 0.20 mm (default) or 0.10 mm fine | 0.20: MachineBlocks, MikeMakess, Brickset (slightly better clutch than 0.10). 0.10: [Klemmbrick](https://makerworld.com/en/models/1954190-klemmbrick-legos-compatible-bricks), Brickset and MikeMakess for a smoother finish |
 | Walls | 3 loops, Arachne, outer wall first | [Printpal](https://blog.printpal.io/design-and-3d-print-your-own-lego-compatible-bricks/) (3-4 perimeters), Klemmbrick (Arachne, outer-inner) |
 | Seam | back | Klemmbrick |

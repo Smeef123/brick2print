@@ -12,16 +12,23 @@ const LDU_MM = 0.4;            // 1 LDraw unit = 0.4 mm
 // part builds its studs and tubes from two shared primitives, so those two are replaced here with
 // 96-sided cylinders whose flats sit at LEGO's sizes. LDraw units: 1 LDU = 0.4 mm, -Y is up.
 const SEGS = 96, FLAT = 1 / Math.cos(Math.PI / SEGS);   // corner radius that puts the flats on size
-const STUD_R = (2.4 / LDU_MM) * FLAT, TUBE_R = (3.255 / LDU_MM) * FLAT, TUBE_HOLE_R = (2.4 / LDU_MM) * FLAT;
+// Studs print at 4.90 mm, not LEGO's 4.80: hard PLA with layer ridges needs a little interference to
+// grip (a MakerWorld stud test gripped only at 4.9-5.0; the user's 4.80 fit test was loose). The fit
+// test then fine-tunes in 0.05 mm steps. Tubes stay at LEGO's 6.51 mm.
+const STUD_R = (2.45 / LDU_MM) * FLAT, TUBE_R = (3.255 / LDU_MM) * FLAT, TUBE_HOLE_R = (2.4 / LDU_MM) * FLAT;
 function ring(r, y) { return Array.from({ length: SEGS }, (_, k) => [r * Math.cos((2 * Math.PI * k) / SEGS), y, r * Math.sin((2 * Math.PI * k) / SEGS)]); }
 const P = (p) => p.map((v) => +v.toFixed(4)).join(' ');
 // type-4 quads / type-3 triangles, wound counter-clockwise seen from outside (BFC CERTIFY CCW)
+// Stud height: LDraw (1.6 mm) exactly fills a plate's hollow, so any droop of the printed hollow's
+// roof (it prints as a bridge) stops a plate sitting flush (user's fit test, 2026-11-17). LEGO plates
+// leave room above the stud; printed ones need it too: studs stand 1.3 mm, leaving 0.3 mm (1.5 layers).
+const STUD_H = 1.3 / LDU_MM;
 function studDat() {
-  const lo = ring(STUD_R, 0), hi = ring(STUD_R, -4), out = ['0 Set2Print print-accurate stud', '0 BFC CERTIFY CCW'];
+  const lo = ring(STUD_R, 0), hi = ring(STUD_R, -STUD_H), out = ['0 Set2Print print-accurate stud', '0 BFC CERTIFY CCW'];
   for (let k = 0; k < SEGS; k++) {
     const k2 = (k + 1) % SEGS;
     out.push(`4 16 ${P(lo[k])} ${P(hi[k])} ${P(hi[k2])} ${P(lo[k2])}`);   // side
-    out.push(`3 16 0 -4 0 ${P(hi[k2])} ${P(hi[k])}`);                       // top, facing up (-Y)
+    out.push(`3 16 0 ${P([-STUD_H])} 0 ${P(hi[k2])} ${P(hi[k])}`);          // top, facing up (-Y)
   }
   return out.join('\n') + '\n';
 }

@@ -23,7 +23,7 @@ export const LEGO_SETTINGS = Object.freeze({
   wall_sequence: 'outer wall/inner wall',   // outer wall laid first, most precise (Klemmbrick)
   seam_position: 'back',                    // seams off the clutch faces (Klemmbrick)
   sparse_infill_density: '15%',             // MachineBlocks, Bambu default
-  brim_type: 'outer_only', brim_width: '5', // small footprints stay down and flat (Prusa blog, MikeMakess)
+  brim_type: 'no_brim',                     // the user's fit test: the brim was hard to remove and left a lip at the base
   enable_support: '0',                      // Set2Print adds its own pillars and fins
   // X-Y contour/hole compensation come from the user's fit test (sources disagree on direction)
 });
