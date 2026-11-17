@@ -8,7 +8,7 @@ Turn a brick set's parts list into ready-to-print 3MF plates, one batch per colo
 - Or paste/upload any parts list (`part, colour, quantity`; Rebrickable CSV exports work as they are).
 - Every part is fetched from the LDraw parts library, converted to millimetres, turned studs-up, and laid out on plates per colour (Bambu X1/P1 corner no-print zone avoided).
 - The page opens on an empty 256 × 256 mm build plate; once built, every plate shows in 3D with a tab per plate.
-- You download a ZIP: one 3MF per plate plus one STL per unique part, and a list of anything not found.
+- You download one Bambu Studio project (.3mf) with every plate in it, one filament per colour, Lego settings already set. STLs and notes are a separate optional download.
 - Everything runs in your browser. Nothing is uploaded.
 
 ## Automatic supports
