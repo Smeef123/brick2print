@@ -1,13 +1,10 @@
 // Set2Print: parts list -> LDraw geometry -> studs-up meshes in mm -> plates per colour -> 3MF + STL zip.
-import * as THREE from 'three';
-import { LDrawLoader } from 'three/addons/loaders/LDrawLoader.js';
 import { COLORS } from './colors.js';
+import { loadPart } from './parts.js';
+import { settingsJson, write3mf as write3mfWith, stl } from './export3mf.js';
 import { autoSupport } from './supports.js';
 import { buildBed, showPlate } from './viewer.js';
 
-// raw.githubusercontent serves every file with CORS; jsDelivr refuses parts of this repo (over its 50 MB limit).
-const LIB = 'https://raw.githubusercontent.com/gkjohnson/ldraw-parts-library/master/complete/ldraw/';
-const LDU_MM = 0.4;            // 1 LDraw unit = 0.4 mm
 const $ = (id) => document.getElementById(id);
 
 // ---------- small helpers ----------
@@ -100,87 +97,22 @@ function fromText(text, withSpares) {
   return { title: 'parts-list', lines: [...merged.values()] };
 }
 
-// ---------- geometry ----------
-const loader = new LDrawLoader();
-loader.setPartsLibraryPath(LIB);
-let materialsReady = null;
-const geomCache = new Map();
-
-function candidates(id) {
-  const base = id.toLowerCase().replace(/\.dat$/, '');
-  const c = [base];
-  const m = base.match(/^(\d+)[a-z]+\d*$/); // e.g. 3069bpr0001 -> 3069b, 3069
-  if (m) { const b = base.match(/^(\d+[a-z]?)/)[1]; if (b !== base) c.push(b); if (m[1] !== b) c.push(m[1]); }
-  return [...new Set(c)];
-}
-
-function parseAsync(text) {
-  return new Promise((res, rej) => loader.parse(text, res, rej));
-}
-
-async function loadPart(id) {
-  if (geomCache.has(id)) return geomCache.get(id);
-  const p = (async () => {
-    if (!materialsReady) materialsReady = loader.preloadMaterials(LIB + 'LDConfig.ldr').catch(() => {});
-    await materialsReady;
-    for (const name of candidates(id)) {
-      const ok = await fetch(LIB + 'parts/' + name + '.dat', { method: 'HEAD' }).then((r) => r.ok).catch(() => false);
-      if (!ok) continue;
-      const group = await parseAsync(`0 Set2Print\n1 16 0 0 0 1 0 0 0 1 0 0 0 1 ${name}.dat\n`);
-      const mesh = toMesh(group);
-      if (!mesh.tris.length) continue; // a sub-file failed to load: treat as not found rather than ship an empty part
-      return { name, mesh };
-    }
-    return null;
-  })();
-  geomCache.set(id, p);
-  return p;
-}
-
-// Collect triangles in mm, studs up (+Z), welded, sitting on z=0 and centred on x/y.
-function toMesh(group) {
-  group.updateMatrixWorld(true);
-  const pos = [];
-  const v = new THREE.Vector3();
-  group.traverse((o) => {
-    if (!o.isMesh) return;
-    const g = o.geometry;
-    const a = g.attributes.position;
-    const idx = g.index;
-    const n = idx ? idx.count : a.count;
-    for (let i = 0; i < n; i++) {
-      v.fromBufferAttribute(a, idx ? idx.getX(i) : i).applyMatrix4(o.matrixWorld);
-      // LDraw: -Y is up. Map (x, y, z) -> (x, z, -y): a rotation, so faces keep their winding.
-      pos.push(v.x * LDU_MM, v.z * LDU_MM, -v.y * LDU_MM);
-    }
-  });
-  const verts = [], tris = [], map = new Map();
-  const id = (x, y, z) => {
-    const k = Math.round(x * 1e4) + ',' + Math.round(y * 1e4) + ',' + Math.round(z * 1e4);
-    let i = map.get(k);
-    if (i === undefined) { i = verts.length / 3; verts.push(x, y, z); map.set(k, i); }
-    return i;
-  };
-  for (let i = 0; i < pos.length; i += 9) {
-    const a = id(pos[i], pos[i + 1], pos[i + 2]), b = id(pos[i + 3], pos[i + 4], pos[i + 5]), c = id(pos[i + 6], pos[i + 7], pos[i + 8]);
-    if (a !== b && b !== c && a !== c) tris.push(a, b, c);
-  }
-  let min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
-  for (let i = 0; i < verts.length; i += 3) for (let k = 0; k < 3; k++) { min[k] = Math.min(min[k], verts[i + k]); max[k] = Math.max(max[k], verts[i + k]); }
-  const off = [-(min[0] + max[0]) / 2, -(min[1] + max[1]) / 2, -min[2]];
-  for (let i = 0; i < verts.length; i += 3) for (let k = 0; k < 3; k++) verts[i + k] += off[k];
-  return { verts: new Float32Array(verts), tris: new Uint32Array(tris), size: [max[0] - min[0], max[1] - min[1], max[2] - min[2]] };
-}
-
 // One decision per unique part: pose + fins, cached.
 const supportCache = new Map();
+// Parts the audit sliced in Bambu Studio where automatic supports came out worse than plain
+// studs-up (audit/decisions.py): those print plain. Unaudited parts use the geometry rules.
+let verifiedP = null;
+const verified = () => (verifiedP ??= fetch('bambu/decisions.json').then((r) => (r.ok ? r.json() : {})).catch(() => ({})));
 function supported(g) {
   if (!supportCache.has(g.name)) {
-    supportCache.set(g.name, new Promise((res) => setTimeout(() => {
+    supportCache.set(g.name, verified().then((v) => new Promise((res) => setTimeout(() => {
       let s;
-      try { s = autoSupport(g.mesh); } catch (e) { s = { mesh: g.mesh, note: 'support check failed: ' + e.message, unserved: 1 }; }
+      if (v[g.name] === 'plain') s = { mesh: g.mesh, note: 'prints as is (checked in Bambu Studio)', before: 0, after: 0, unserved: 0 };
+      else {
+        try { s = autoSupport(g.mesh); } catch (e) { s = { mesh: g.mesh, note: 'support check failed: ' + e.message, unserved: 1 }; }
+      }
       res({ name: g.name, mesh: s.mesh, support: s });
-    }, 0)));
+    }, 0))));
   }
   return supportCache.get(g.name);
 }
@@ -207,72 +139,13 @@ function pack(items, bed, gap, margin = 8) {
   return plates.filter((p) => p.length);
 }
 
-// ---------- writers ----------
-function model3mf(objects, items, scale) {
-  const f = (n) => (Math.round(n * 1e4) / 1e4).toString();
-  let s = '<?xml version="1.0" encoding="UTF-8"?>\n<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">\n<resources>\n';
-  objects.forEach((o, i) => {
-    const vs = [], ts = [];
-    for (let k = 0; k < o.mesh.verts.length; k += 3) vs.push(`<vertex x="${f(o.mesh.verts[k])}" y="${f(o.mesh.verts[k + 1])}" z="${f(o.mesh.verts[k + 2])}"/>`);
-    for (let k = 0; k < o.mesh.tris.length; k += 3) ts.push(`<triangle v1="${o.mesh.tris[k]}" v2="${o.mesh.tris[k + 1]}" v3="${o.mesh.tris[k + 2]}"/>`);
-    s += `<object id="${i + 1}" name="${esc(o.label)}" type="model"><mesh><vertices>${vs.join('')}</vertices><triangles>${ts.join('')}</triangles></mesh></object>\n`;
-  });
-  s += '</resources>\n<build>\n';
-  for (const it of items) s += `<item objectid="${it.obj}" transform="${f(scale)} 0 0 0 ${f(scale)} 0 0 0 ${f(scale)} ${f(it.cx)} ${f(it.cy)} 0"/>\n`;
-  return s + '</build>\n</model>\n';
-}
-
-// Lego print settings written into every plate, on top of a complete Bambu P1S/X1/P2S profile
-// (bambu/p1s-base.json: 0.20mm Standard, Generic PLA). Evidence for each value is in README.md.
-const LEGO_SETTINGS = Object.freeze({
-  wall_loops: '3',                          // walls and studs print solid (3-4 perimeters: Printpal)
-  wall_generator: 'arachne',                // even wall widths on thin features (Klemmbrick, 178 reviews)
-  wall_sequence: 'outer wall/inner wall',   // outer wall laid first, most precise (Klemmbrick)
-  seam_position: 'back',                    // seams off the clutch faces (Klemmbrick)
-  sparse_infill_density: '15%',             // MachineBlocks, Bambu default
-  brim_type: 'outer_only', brim_width: '5', // small footprints stay down and flat (Prusa blog, MikeMakess)
-  enable_support: '0',                      // Set2Print adds its own pillars and fins
-  // X-Y contour/hole compensation come from the user's fit test (sources disagree on direction)
-});
+// ---------- writers (export3mf.js) ----------
 let baseCfgP = null;
 async function projectSettings(layer, rgb) {
   baseCfgP ??= fetch('bambu/p1s-base.json').then((r) => r.json());
-  const cfg = { ...(await baseCfgP), ...LEGO_SETTINGS };
-  cfg.layer_height = layer;
-  const fit = fitState();                  // from the fit test, 0 until the user reports a fit
-  cfg.xy_contour_compensation = fit.contour.toFixed(2);
-  cfg.xy_hole_compensation = fit.hole.toFixed(2);
-  cfg.print_settings_id = `Set2Print Lego ${layer}mm`;
-  cfg.filament_colour = ['#' + rgb.toUpperCase()];
-  cfg.different_settings_to_system = [Object.keys(LEGO_SETTINGS).concat('layer_height').join(';'), '', ''];
-  return JSON.stringify(cfg, null, 4);
+  return settingsJson(await baseCfgP, layer, rgb, fitState());
 }
-
-async function write3mf(zip, path, objects, items, scale, settings) {
-  const z = new JSZip();
-  z.file('[Content_Types].xml', '<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/></Types>');
-  z.file('_rels/.rels', '<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Target="/3D/3dmodel.model" Id="rel0" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/></Relationships>');
-  let model = model3mf(objects, items, scale);
-  // marked as a Bambu Studio project so the slicer takes the embedded settings
-  if (settings) {
-    model = model.replace('<resources>', '<metadata name="Application">BambuStudio-02.09.01.70</metadata>\n<resources>');
-    z.file('Metadata/project_settings.config', settings);
-  }
-  z.file('3D/3dmodel.model', model);
-  zip.file(path, await z.generateAsync({ type: 'uint8array', compression: 'DEFLATE' }));
-}
-
-function stl(mesh, scale) {
-  const n = mesh.tris.length / 3, buf = new ArrayBuffer(84 + n * 50), dv = new DataView(buf);
-  dv.setUint32(80, n, true);
-  let o = 84;
-  for (let t = 0; t < n; t++) {
-    o += 12; // normal left zero; slicers recompute it
-    for (let k = 0; k < 3; k++) { const vi = mesh.tris[t * 3 + k] * 3; for (let a = 0; a < 3; a++) { dv.setFloat32(o, mesh.verts[vi + a] * scale, true); o += 4; } }
-    o += 2;
-  }
-  return new Uint8Array(buf);
-}
+const write3mf = (zip, path, objects, items, scale, settings) => write3mfWith(JSZip, zip, path, objects, items, scale, settings);
 
 // ---------- UI ----------
 let lastZip = null, lastName = 'set2print.zip';
@@ -331,7 +204,14 @@ async function build() {
     let plateCount = 0;
     const viewPlates = [];
     const byColour = new Map();
-    for (const l of lines) if (l.geom) { if (!byColour.has(l.colour.name)) byColour.set(l.colour.name, []); byColour.get(l.colour.name).push(l); }
+    // parts wider than the bed (minus its edge margins) can't be printed whole: report them, don't ship a broken plate
+    const tooBig = [];
+    for (const l of lines) {
+      if (!l.geom) continue;
+      if (Math.max(l.geom.mesh.size[0], l.geom.mesh.size[1]) * scale > bed - 16) { tooBig.push(l); setRow(lines.indexOf(l), 'bad', `too big for a ${bed} mm bed`); continue; }
+      if (!byColour.has(l.colour.name)) byColour.set(l.colour.name, []);
+      byColour.get(l.colour.name).push(l);
+    }
     for (const [colour, ls] of byColour) {
       const items = [];
       for (const l of ls) for (let q = 0; q < l.qty; q++) items.push({ line: l, w: l.geom.mesh.size[0] * scale, h: l.geom.mesh.size[1] * scale });
@@ -354,6 +234,7 @@ async function build() {
     }
     const seen = new Set();
     for (const l of lines) if (l.geom && !seen.has(l.geom.name)) { seen.add(l.geom.name); zip.file(`parts/${l.geom.name}.stl`, stl(l.geom.mesh, scale)); }
+    if (tooBig.length) zip.file('too-big.txt', `These parts are wider than a ${bed} mm bed and were left out:\n\n` + tooBig.map((l) => `${l.part}\t${l.colour.name}\tx${l.qty}\t${l.name || ''}`).join('\n') + '\n');
     const notFound = lines.filter((l) => !l.geom);
     if (notFound.length) zip.file('not-found.txt', 'These parts are not in the LDraw library (often stickers, printed or rubber parts, or newer molds):\n\n' + notFound.map((l) => `${l.part}\t${l.colour.name}\tx${l.qty}\t${l.name || ''}`).join('\n') + '\n');
     const supNotes = [...new Map(lines.filter((l) => l.geom && l.geom.support && l.geom.support.note !== 'prints as is').map((l) => [l.geom.name, l.geom.support])).entries()];

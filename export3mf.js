@@ -1,0 +1,67 @@
+// 3MF / STL writers and the Lego print settings. Shared by the site (app.js) and the audit (audit/).
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+export function model3mf(objects, items, scale) {
+  const f = (n) => (Math.round(n * 1e4) / 1e4).toString();
+  let s = '<?xml version="1.0" encoding="UTF-8"?>\n<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">\n<resources>\n';
+  objects.forEach((o, i) => {
+    const vs = [], ts = [];
+    for (let k = 0; k < o.mesh.verts.length; k += 3) vs.push(`<vertex x="${f(o.mesh.verts[k])}" y="${f(o.mesh.verts[k + 1])}" z="${f(o.mesh.verts[k + 2])}"/>`);
+    for (let k = 0; k < o.mesh.tris.length; k += 3) ts.push(`<triangle v1="${o.mesh.tris[k]}" v2="${o.mesh.tris[k + 1]}" v3="${o.mesh.tris[k + 2]}"/>`);
+    s += `<object id="${i + 1}" name="${esc(o.label)}" type="model"><mesh><vertices>${vs.join('')}</vertices><triangles>${ts.join('')}</triangles></mesh></object>\n`;
+  });
+  s += '</resources>\n<build>\n';
+  for (const it of items) s += `<item objectid="${it.obj}" transform="${f(scale)} 0 0 0 ${f(scale)} 0 0 0 ${f(scale)} ${f(it.cx)} ${f(it.cy)} 0"/>\n`;
+  return s + '</build>\n</model>\n';
+}
+
+// Lego print settings written into every plate, on top of a complete Bambu P1S/X1/P2S profile
+// (bambu/p1s-base.json: 0.20mm Standard, Generic PLA). Evidence for each value is in README.md.
+export const LEGO_SETTINGS = Object.freeze({
+  wall_loops: '3',                          // walls and studs print solid (3-4 perimeters: Printpal)
+  wall_generator: 'arachne',                // even wall widths on thin features (Klemmbrick, 178 reviews)
+  wall_sequence: 'outer wall/inner wall',   // outer wall laid first, most precise (Klemmbrick)
+  seam_position: 'back',                    // seams off the clutch faces (Klemmbrick)
+  sparse_infill_density: '15%',             // MachineBlocks, Bambu default
+  brim_type: 'outer_only', brim_width: '5', // small footprints stay down and flat (Prusa blog, MikeMakess)
+  enable_support: '0',                      // Set2Print adds its own pillars and fins
+  // X-Y contour/hole compensation come from the user's fit test (sources disagree on direction)
+});
+/** The complete Bambu project settings for a plate: base profile + Lego values + layer, colour and fit. */
+export function settingsJson(base, layer, rgb, fit = { contour: 0, hole: 0 }) {
+  const cfg = { ...base, ...LEGO_SETTINGS };
+  cfg.layer_height = String(layer);
+  cfg.xy_contour_compensation = fit.contour.toFixed(2);
+  cfg.xy_hole_compensation = fit.hole.toFixed(2);
+  cfg.print_settings_id = `Set2Print Lego ${layer}mm`;
+  cfg.filament_colour = ['#' + rgb.toUpperCase()];
+  cfg.different_settings_to_system = [Object.keys(LEGO_SETTINGS).concat('layer_height').join(';'), '', ''];
+  return JSON.stringify(cfg, null, 4);
+}
+
+export async function write3mf(JSZip, zip, path, objects, items, scale, settings) {
+  const z = new JSZip();
+  z.file('[Content_Types].xml', '<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/></Types>');
+  z.file('_rels/.rels', '<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Target="/3D/3dmodel.model" Id="rel0" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/></Relationships>');
+  let model = model3mf(objects, items, scale);
+  // marked as a Bambu Studio project so the slicer takes the embedded settings
+  if (settings) {
+    model = model.replace('<resources>', '<metadata name="Application">BambuStudio-02.09.01.70</metadata>\n<resources>');
+    z.file('Metadata/project_settings.config', settings);
+  }
+  z.file('3D/3dmodel.model', model);
+  zip.file(path, await z.generateAsync({ type: 'uint8array', compression: 'DEFLATE' }));
+}
+
+export function stl(mesh, scale) {
+  const n = mesh.tris.length / 3, buf = new ArrayBuffer(84 + n * 50), dv = new DataView(buf);
+  dv.setUint32(80, n, true);
+  let o = 84;
+  for (let t = 0; t < n; t++) {
+    o += 12; // normal left zero; slicers recompute it
+    for (let k = 0; k < 3; k++) { const vi = mesh.tris[t * 3 + k] * 3; for (let a = 0; a < 3; a++) { dv.setFloat32(o, mesh.verts[vi + a] * scale, true); o += 4; } }
+    o += 2;
+  }
+  return new Uint8Array(buf);
+}
+

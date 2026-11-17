@@ -17,7 +17,7 @@
 import { computeFins } from './vendor/support-fins/plugins/shared/engine/fins_entry.js';
 
 export const RULES = Object.freeze({
-  BRIDGE_MM: 20,       // longest ordinary bridge
+  BRIDGE_MM: 40,       // bridges: 20 mm ordinary, 20-50 mm a real option on P-series PLA (50 mm printed clean on a P2S); the audit found 20 turned parts that printed fine studs-up
   CANTILEVER_MM: 1.0,  // sideways step allowed from material below
   PROBE_MM: 0.3,       // how far below a ceiling we look for that material
   CELL_MM: 0.25,       // sampling grid
@@ -137,14 +137,16 @@ export function unsupportedArea(mesh) {
   // however close it sits to a wall beside it
   const isl = islandStarts(verts, tris);
   const have = new Set();
+  let islandCells = 0;
   for (let c = 0; c < failing.length; c += 3) have.add(Math.floor(failing[c] / g) + ',' + Math.floor(failing[c + 1] / g) + ',' + Math.round(failing[c + 2] / 3));
   for (let c = 0; c < isl.length; c += 3) {
     const k = Math.floor(isl[c] / g) + ',' + Math.floor(isl[c + 1] / g) + ',' + Math.round(isl[c + 2] / 3);
     if (have.has(k)) continue;
-    have.add(k); fail++;
+    have.add(k); fail++; islandCells++;
     failing.push(isl[c], isl[c + 1], isl[c + 2]); under.push(isl[c], isl[c + 1], isl[c + 2]);
   }
-  return { failMm2: fail * g * g + (isl.emptyGap ? EMPTY_GAP_PENALTY : 0), cells: cells.length / 3, failCells: fail, failing, under, emptyGap: isl.emptyGap, layerCells: isl.layerCells };
+  // islandMm2: the part that starts in mid-air (a print failure, not just a rougher underside)
+  return { failMm2: fail * g * g + (isl.emptyGap ? EMPTY_GAP_PENALTY : 0), islandMm2: islandCells * g * g, cells: cells.length / 3, failCells: fail, failing, under, emptyGap: isl.emptyGap, layerCells: isl.layerCells };
 }
 const MAX_SLENDER = 2.5; // height : narrowest footprint side, for a turned part
 const EMPTY_GAP_PENALTY = 1e6; // a pose with a layer of nothing between solid layers can't be sliced at all
@@ -152,7 +154,7 @@ const EMPTY_GAP_PENALTY = 1e6; // a pose with a layer of nothing between solid l
 // Slice the part at each layer's mid-height (LAYER_MM steps), fill each section
 // (even-odd scanlines on a FINE_MM grid) and report the cells of every region that
 // overlaps nothing in the layer below: [x, y, z] at the region's underside.
-const LAYER_MM = 0.2, FINE_MM = 0.1, MIN_ISLAND_CELLS = 4, MIN_LAYER_MM2 = 0.0;
+const LAYER_MM = 0.2, FINE_MM = 0.1, MIN_ISLAND_CELLS = 4, MIN_LAYER_MM2 = 0.0, ISLAND_JOIN_CELLS = 12; // 1.2 mm: about three line widths, enough for hole roofs split by open meshes
 function islandStarts(verts, tris) {
   let min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
   for (let k = 0; k < verts.length; k += 3) for (let a = 0; a < 3; a++) { min[a] = Math.min(min[a], verts[k + a]); max[a] = Math.max(max[a], verts[k + a]); }
@@ -216,7 +218,14 @@ function islandStarts(verts, tris) {
           }
         }
         if (!touches && comp.length >= MIN_ISLAND_CELLS) {
-          for (const c of comp) { const i = c % W, j = (c - i) / W; out.push(x0 + (i + 0.5) * f, y0 + (j + 0.5) * f, z - LAYER_MM / 2); }
+          // A piece with other material close on both sides in its own layer is a bridge across
+          // a narrow gap (a hole roof, often split only by an open mesh); the slicer joins it.
+          const near = (i, j, di, dj) => { for (let s = 1; s <= ISLAND_JOIN_CELLS; s++) { const ii = i + di * s, jj = j + dj * s; if (ii < 0 || jj < 0 || ii >= W || jj >= H) return false; const n = jj * W + ii; if (occ[n] && lab[n] !== id) return true; } return false; };
+          for (const c of comp) {
+            const i = c % W, j = (c - i) / W;
+            if ([[1, 0], [0, 1], [1, 1], [1, -1]].some(([di, dj]) => near(i, j, di, dj) && near(i, j, -di, -dj))) continue;
+            out.push(x0 + (i + 0.5) * f, y0 + (j + 0.5) * f, z - LAYER_MM / 2);
+          }
         }
       }
     }
@@ -270,7 +279,8 @@ export function addPillars(mesh, failing, under = []) {
     const x = cand[c], y = cand[c + 1], z = cand[c + 2];
     const ck = Math.floor(x / g) + ',' + Math.floor(y / g) + ',' + Math.round(z / 3);   // stacked undersides (3 mm apart or more) get their own pillars
     if (taken.has(ck)) continue;
-    const top = z - GAP_MM, floor = floorBelow(verts, tris, x, y, z);
+    // the foot stands on the highest point under the cell's corners: on a slope or curve no part of it hangs in the air
+    const top = z - GAP_MM, floor = Math.max(...[[-1, -1], [1, -1], [1, 1], [-1, 1], [0, 0]].map(([a, b]) => floorBelow(verts, tris, x + a * g / 2, y + b * g / 2, z)));
     if (top - floor < 0.4) { why.low++; continue; }
     const i = Math.floor(x / g) - box.i0, j = Math.floor(y / g) - box.j0;
     let ok = true;
@@ -367,6 +377,8 @@ export function autoSupport(mesh) {
     // half of what studs-up (with its pillars) leaves, and studs-up has to need help at all
     if (!best) best = c;
     else if (best.pose === POSES[0] && best.left.failMm2 < RULES.MIN_FAIL_MM2) continue;
+    // a turn must not start more of the part in mid-air than studs-up does: that fails outright, a rough underside doesn't
+    else if (c.left.islandMm2 > best.left.islandMm2 + 0.5) continue;
     else if (c.left.failMm2 < Math.min(best.left.failMm2 - 0.5, best.pose === POSES[0] ? best.left.failMm2 * 0.5 : Infinity)) best = c;
     else if (best.pose !== POSES[0] && Math.abs(c.left.failMm2 - best.left.failMm2) <= 0.5 && c.pillars < best.pillars) best = c;
   }
