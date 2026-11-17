@@ -1,0 +1,1 @@
+Vendored from github.com/gittrahan/support-fins @ 1d14d02 (MIT, see LICENSE). Unmodified.

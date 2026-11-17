@@ -108,8 +108,10 @@ footer a{color:inherit}
       <label class="narrow">Gap, mm<input id="gap" type="number" value="12" min="2" max="40" step="1"></label>
       <label class="narrow">Bed, mm<input id="bed" type="number" value="256" min="100" max="400" step="1"></label>
       <label class="check"><input id="spares" type="checkbox"> Include spare parts</label>
+      <label class="check"><input id="fins" type="checkbox" checked> Automatic supports</label>
     </div>
     <p class="hint">Gap leaves room for a brim between parts. Real bricks clutch hardest at 100%; try 99.5% if prints are too tight.</p>
+    <p class="hint">Automatic supports: every underside is checked by geometry. Bridges up to 20 mm and overhangs up to about 70° print as they are; a part that fails is turned onto its best side, and anything still overhanging gets breakaway fins from <a href="https://printfins.com" target="_blank" rel="noopener">Support Fins</a>. Print with slicer supports off.</p>
   </section>
 
   <div class="row">

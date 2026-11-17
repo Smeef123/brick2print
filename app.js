@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { LDrawLoader } from 'three/addons/loaders/LDrawLoader.js';
 import { COLORS } from './colors.js';
+import { autoSupport } from './supports.js';
 
 // raw.githubusercontent serves every file with CORS; jsDelivr refuses parts of this repo (over its 50 MB limit).
 const LIB = 'https://raw.githubusercontent.com/gkjohnson/ldraw-parts-library/master/complete/ldraw/';
@@ -161,6 +162,19 @@ function toMesh(group) {
   return { verts: new Float32Array(verts), tris: new Uint32Array(tris), size: [max[0] - min[0], max[1] - min[1], max[2] - min[2]] };
 }
 
+// One decision per unique part: pose + fins, cached.
+const supportCache = new Map();
+function supported(g) {
+  if (!supportCache.has(g.name)) {
+    supportCache.set(g.name, new Promise((res) => setTimeout(() => {
+      let s;
+      try { s = autoSupport(g.mesh); } catch (e) { s = { mesh: g.mesh, note: 'support check failed: ' + e.message, unserved: 1 }; }
+      res({ name: g.name, mesh: s.mesh, support: s });
+    }, 0)));
+  }
+  return supportCache.get(g.name);
+}
+
 // ---------- layout: shelf-pack footprints onto plates ----------
 // Bambu X1/P1 beds have a no-print zone in the front-left corner (purge chute): 18 x 28 mm.
 const KEEPOUT = { w: 18, h: 28 };
@@ -236,6 +250,7 @@ async function build() {
     const scale = (parseFloat($('scale').value) || 100) / 100;
     const gap = parseFloat($('gap').value) || 12;
     const bed = parseFloat($('bed').value) || 256;
+    const fins = $('fins').checked;
     let src;
     if ($('tab-set').getAttribute('aria-selected') === 'true') {
       store.set('s2p.key', $('apikey').value.trim());
@@ -257,8 +272,10 @@ async function build() {
         const [l, i] = queue.shift();
         setRow(i, 'wait', 'loading');
         const g = await loadPart(l.ldraw).catch(() => null);
-        l.geom = g;
-        if (g) setRow(i, 'ok', 'ready'); else { setRow(i, 'bad', 'not in LDraw'); missing++; }
+        l.geom = g && (fins ? await supported(g) : g);
+        if (!g) { setRow(i, 'bad', 'not in LDraw'); missing++; }
+        else if (!fins || !l.geom.support || l.geom.support.note === 'prints as is') setRow(i, 'ok', 'ready');
+        else setRow(i, l.geom.support.unserved ? 'skip' : 'ok', l.geom.support.note);
         done++; status(`Loading parts ${done} / ${lines.length}`);
         sum({ missing });
       }
@@ -293,7 +310,9 @@ async function build() {
     for (const l of lines) if (l.geom && !seen.has(l.geom.name)) { seen.add(l.geom.name); zip.file(`parts/${l.geom.name}.stl`, stl(l.geom.mesh, scale)); }
     const notFound = lines.filter((l) => !l.geom);
     if (notFound.length) zip.file('not-found.txt', 'These parts are not in the LDraw library (often stickers, printed or rubber parts, or newer molds):\n\n' + notFound.map((l) => `${l.part}\t${l.colour.name}\tx${l.qty}\t${l.name || ''}`).join('\n') + '\n');
-    zip.file('README.txt', `Made with Set2Print from: ${src.title}\nScale ${Math.round(scale * 1000) / 10}%. Parts are studs-up, one 3MF per plate, named by colour.\nPart geometry from the LDraw.org parts library (CC BY 2.0). Inventory and colours from Rebrickable.\n`);
+    const supNotes = [...new Map(lines.filter((l) => l.geom && l.geom.support && l.geom.support.note !== 'prints as is').map((l) => [l.geom.name, l.geom.support])).entries()];
+    if (supNotes.length) zip.file('supports.txt', 'Parts turned or given fins automatically (slicer supports stay off):\n\n' + supNotes.map(([n, s]) => `${n}\t${s.note}\t(unsupported before: ${s.before.toFixed(1)} mm2, after turning: ${s.after.toFixed(1)} mm2)`).join('\n') + '\n');
+    zip.file('README.txt', `Made with Set2Print from: ${src.title}\nScale ${Math.round(scale * 1000) / 10}%. Parts are studs-up unless supports.txt says otherwise, one 3MF per plate, named by colour.\nPrint with slicer supports OFF: overhangs were checked by geometry (bridges up to 20 mm, overhangs up to ~70 degrees) and given breakaway fins (Support Fins engine) where needed.\nPart geometry from the LDraw.org parts library (CC BY 2.0). Inventory and colours from Rebrickable.\n`);
     lastZip = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' });
     lastName = base + '-set2print.zip';
     $('dl').hidden = false;
@@ -331,4 +350,4 @@ drop.ondragleave = () => drop.classList.remove('over');
 drop.ondrop = async (e) => { e.preventDefault(); drop.classList.remove('over'); const f = e.dataTransfer.files[0]; if (f) $('listtext').value = await f.text(); };
 
 // test hook: lets an automated check run the whole pipeline without clicks
-window.set2print = { fromText, loadPart, pack, build, get zip() { return lastZip; } };
+window.set2print = { fromText, loadPart, pack, build, supported, get zip() { return lastZip; } };
