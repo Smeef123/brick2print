@@ -31,6 +31,8 @@ jobs:
         run: |
           cp index.html app.js parts.js export3mf.js viewer.js colors.js supports.js README.md LICENSE .nojekyll _site/
           cp -r vendor bambu _site/
+      - name: Stamp script and data URLs with the commit (no stale cached files)
+        run: node scripts/stamp.mjs _site "${GITHUB_SHA::7}"
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site

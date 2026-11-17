@@ -1,7 +1,7 @@
-// Set2Print: parts list -> LDraw geometry -> studs-up meshes in mm -> plates per colour -> 3MF + STL zip.
+// Set2Print: parts list -> LDraw geometry -> studs-up meshes in mm -> plates per colour -> one Bambu Studio .3mf.
 import { COLORS } from './colors.js';
 import { loadPart } from './parts.js';
-import { multiFilamentSettings, projectFile, stl } from './export3mf.js';
+import { multiFilamentSettings, projectFile } from './export3mf.js';
 import { autoSupport } from './supports.js';
 import { buildBed, showPlate } from './viewer.js';
 
@@ -151,7 +151,7 @@ async function projectSettings(layer, rgbs, bed) {
 }
 
 // ---------- UI ----------
-let lastFile = null, lastName = 'set2print.3mf', lastExtras = null, lastExtrasName = '';
+let lastFile = null, lastName = 'set2print.3mf';
 
 function render(lines) {
   $('rows').innerHTML = lines.map((l, i) => `<tr id="r${i}"><td class="mono">${esc(l.part)}</td><td class="name">${esc(l.name || '')}</td>` +
@@ -162,7 +162,7 @@ const sum = (o) => { for (const [k, v] of Object.entries(o)) $('s-' + k).textCon
 
 async function build() {
   const btn = $('go');
-  btn.disabled = true; $('dl').hidden = true; $('dlx').hidden = true; lastFile = lastExtras = null;
+  btn.disabled = true; $('dl').hidden = true; lastFile = null;
   try {
     const spares = $('spares').checked;
     const scale = (parseFloat($('scale').value) || 100) / 100;
@@ -202,7 +202,6 @@ async function build() {
 
     // pack per colour and write
     status('Laying out plates…');
-    const zip = new JSZip();
     const base = slug(src.title) || 'set';
     let plateCount = 0;
     const viewPlates = [], projectPlates = [], colourRgbs = [];
@@ -229,14 +228,6 @@ async function build() {
         status(`Writing plates… ${plateCount}`);
       }
     }
-    const seen = new Set();
-    for (const l of lines) if (l.geom && !seen.has(l.geom.name)) { seen.add(l.geom.name); zip.file(`parts/${l.geom.name}.stl`, stl(l.geom.mesh, scale)); }
-    if (tooBig.length) zip.file('too-big.txt', `These parts are wider than a ${bed} mm bed and were left out:\n\n` + tooBig.map((l) => `${l.part}\t${l.colour.name}\tx${l.qty}\t${l.name || ''}`).join('\n') + '\n');
-    const notFound = lines.filter((l) => !l.geom);
-    if (notFound.length) zip.file('not-found.txt', 'These parts are not in the LDraw library (often stickers, printed or rubber parts, or newer molds):\n\n' + notFound.map((l) => `${l.part}\t${l.colour.name}\tx${l.qty}\t${l.name || ''}`).join('\n') + '\n');
-    const supNotes = [...new Map(lines.filter((l) => l.geom && l.geom.support && l.geom.support.note !== 'prints as is').map((l) => [l.geom.name, l.geom.support])).entries()];
-    if (supNotes.length) zip.file('supports.txt', 'Parts turned or given fins automatically (slicer supports stay off):\n\n' + supNotes.map(([n, s]) => `${n}\t${s.note}\t(unsupported underside studs-up: ${s.before.toFixed(1)} mm2, left after supports: ${s.after.toFixed(1)} mm2)`).join('\n') + '\n');
-    zip.file('README.txt', `Made with Set2Print from: ${src.title}\nScale ${Math.round(scale * 1000) / 10}%. Open the .3mf download in Bambu Studio: every plate is in it, one filament per colour. These STLs are the same parts, studs-up unless supports.txt says otherwise.\nPrint with slicer supports OFF: overhangs were checked by geometry and by Bambu Studio in the audit, and given breakaway pillars or fins where needed.\nPart geometry from the LDraw.org parts library (CC BY 2.0). Inventory and colours from Rebrickable.\n`);
     renderPlateTabs(viewPlates);
     if (projectPlates.length) {
       status('Writing the Bambu Studio project…');
@@ -244,10 +235,7 @@ async function build() {
       lastName = base + '.3mf';
       $('dl').hidden = false;
     }
-    lastExtras = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' });
-    lastExtrasName = base + '-stl-and-notes.zip';
-    $('dlx').hidden = false;
-    status(`Done: ${plateCount} plates${missing ? `, ${missing} line(s) not found (listed in not-found.txt)` : ''}.`);
+    status(`Done: ${plateCount} plates${missing ? `, ${missing} part(s) not in the library` : ''}${tooBig.length ? `, ${tooBig.length} too big for the bed` : ''} (marked in the table below).`);
   } catch (e) {
     status(e.message || String(e));
   } finally {
@@ -292,7 +280,7 @@ function reportFit(part, verdict) {
 }
 
 async function buildFitTest() {
-  const btn = $('fit'); btn.disabled = true; $('dl').hidden = true; $('dlx').hidden = true; lastFile = lastExtras = null;
+  const btn = $('fit'); btn.disabled = true; $('dl').hidden = true; lastFile = null;
   try {
     status('Loading the test parts…');
     const [brick, plate] = await Promise.all([loadPart('3001'), loadPart('3020')]);
@@ -343,7 +331,6 @@ $('fitreset').onclick = () => { store.set('s2p.fit', ''); showFit(); status('Fit
 showFit();
 $('bed').onchange = () => buildBed(parseFloat($('bed').value) || 256);
 $('dl').onclick = () => save(lastFile, lastName);
-$('dlx').onclick = () => save(lastExtras, lastExtrasName);
 $('file').onchange = async (e) => { const f = e.target.files[0]; if (f) { $('listtext').value = await f.text(); } };
 const drop = $('drop');
 drop.ondragover = (e) => { e.preventDefault(); drop.classList.add('over'); };
@@ -351,4 +338,4 @@ drop.ondragleave = () => drop.classList.remove('over');
 drop.ondrop = async (e) => { e.preventDefault(); drop.classList.remove('over'); const f = e.dataTransfer.files[0]; if (f) $('listtext').value = await f.text(); };
 
 // test hook: lets an automated check run the whole pipeline without clicks
-window.set2print = { fromText, loadPart, pack, build, supported, get file() { return lastFile; }, get zip() { return lastExtras; } };
+window.set2print = { fromText, loadPart, pack, build, supported, get file() { return lastFile; } };
