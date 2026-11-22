@@ -25,6 +25,7 @@ export const LEGO_SETTINGS = Object.freeze({
   sparse_infill_density: '15%',             // MachineBlocks, Bambu default
   brim_type: 'no_brim',                     // the user's fit test: the brim was hard to remove and left a lip at the base
   enable_support: '0',                      // Set2Print adds its own pillars and fins
+  reduce_crossing_wall: '1',                // travel around walls, less stringing across studs (fdm-printing SKILL.md:95)
   // X-Y contour/hole compensation come from the user's fit test (sources disagree on direction)
 });
 /** The complete Bambu project settings for a plate: base profile + Lego values + layer, colour and fit. */
@@ -33,7 +34,7 @@ export function settingsJson(base, layer, rgb, fit = { contour: 0, hole: 0 }) {
   cfg.layer_height = String(layer);
   cfg.xy_contour_compensation = fit.contour.toFixed(2);
   cfg.xy_hole_compensation = fit.hole.toFixed(2);
-  cfg.print_settings_id = `Set2Print Lego ${layer}mm`;
+  cfg.print_settings_id = `Set2Print Bricks ${layer}mm`;   // MakerWorld rejects profiles naming "Lego" (fdm-printing SKILL.md:302)
   cfg.filament_colour = ['#' + rgb.toUpperCase()];
   cfg.different_settings_to_system = [Object.keys(LEGO_SETTINGS).concat('layer_height').join(';'), '', ''];
   return JSON.stringify(cfg, null, 4);

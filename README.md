@@ -30,16 +30,19 @@ Plates for 256 mm beds (Bambu P1S, P1P, X1, P2S) carry a complete Bambu Studio p
 |---|---|---|
 | Orientation | studs up, hollow side on the plate, no slicer supports | [Prusa blog](https://blog.prusa3d.com/how-to-make-3d-printed-lego-and-lego-duplo-parts_31741/), [MachineBlocks](https://machineblocks.com/docs/get-started), [Brickset test](https://brickset.com/article/128767/can-you-make-compatible-bricks-with-consumer-3d-printers), MikeMakess (P1S, YouTube) |
 | Brim | none | the user's fit test: a brim was hard to remove and left a lip at the base |
-| Studs | 4.90 mm across, 1.3 mm tall (LDraw's 16-sided 4.71 x 1.6 mm studs replaced; tubes 6.51 mm) | printed studs must be oversize: MachineBlocks 5.00, LEGO.scad presets 4.94-5.03, brickify 4.85, OpenSCADLEGO ~5.09; hollows need room above studs: MachineBlocks +0.6 mm, brickify +0.2 mm |
+| Studs | 5.00 mm across, 1.7 mm tall, solid and open studs alike (LDraw's 16-sided 4.71 x 1.6 mm studs replaced by closed 96-sided ones; tubes 6.51 mm). The 1xN underside pin (stud3) is still LDraw's | printed studs must be oversize: MachineBlocks 5.00, [Klemmbrick](https://makerworld.com/en/models/1954190-klemmbrick-legos-compatible-bricks) 5.04 (measured; 2,800+ prints), LEGO.scad presets 4.94-5.03, brickify 4.85; height: MachineBlocks 1.6, Klemmbrick 1.8 |
+| Side gap | 0.1 mm off every outside wall, flat or round (a 2x4 is 31.8 x 15.8 mm, a 1x1 round 7.8 across; LDraw draws 32.0 x 16.0 and 8.0) | MachineBlocks and LEGO.scad 0.1 per side, Klemmbrick 0.075, so neighbouring bricks don't jam |
+| Plate hollows | 2.2 mm deep under a 1.0 mm roof (LDraw: 1.6 under 1.6), so a 1.7 mm stud leaves 0.5 mm for the printed roof's sag | MachineBlocks (2.2 / 1.0); the user's fit test: plates didn't sit flush with no room above the stud |
 | Layer height | 0.20 mm (default) or 0.10 mm fine | 0.20: MachineBlocks, MikeMakess, Brickset (slightly better clutch than 0.10). 0.10: [Klemmbrick](https://makerworld.com/en/models/1954190-klemmbrick-legos-compatible-bricks), Brickset and MikeMakess for a smoother finish |
 | Walls | 3 loops, Arachne, outer wall first | [Printpal](https://blog.printpal.io/design-and-3d-print-your-own-lego-compatible-bricks/) (3-4 perimeters), Klemmbrick (Arachne, outer-inner) |
 | Seam | back | Klemmbrick |
+| Travel | avoid crossing walls | community consensus against stringing (research notes) |
 | Infill | 15% | MachineBlocks, Bambu default |
 | Material | PLA | MachineBlocks, Printpal, MikeMakess, Brickset |
 | X-Y compensation | 0 | sources disagree in direction ([Meshy](https://www.meshy.ai/blog/lego-compatible-3d-print-tolerances) shrinks studs; a [stud test](https://makerworld.com/en/models/1007391-leg0-brick-stud-size-test) needed them bigger): calibrate on your printer instead |
 | Elephant-foot compensation | 0.15 mm (Bambu's P1S value) | Prusa suggests 0.4 mm, measured on Prusa printers; raise it if the bottom rim won't slide over studs |
 
-Every source agrees printed bricks clutch less than real ones and that a quick fit test on your own printer beats any default.
+Every source agrees printed bricks clutch less than real ones and that a quick fit test on your own printer beats any default. [docs/research_applied.md](docs/research_applied.md) lists every printing-research finding checked against the site and what was done with it.
 
 ## Fit test
 
