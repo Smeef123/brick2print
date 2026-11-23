@@ -194,6 +194,6 @@ under 0.5 mm2 starting in mid-air, median of up to 3 Bambu Studio CLI slices). T
   2852 10.3, 15535 31.9 (a torn hollow, fixed), 47456 1.4, 92820c01pr0009 5.7, 11403c01pr0106 6.1,
   92820c01pr0153 5.7, 47847 3.9, 3940b 6.1 mm2, and 2371 (wrong part). decisions.json now prints those plain.
 - So for audited parts the decisions file covers it; for parts outside the audit the check over-flags about
-  half of what it flags (88 of 193), and turning a clean part is the step that does harm (12 of the 19 turned
+  half of what it flags (88 of 193), and turning a clean part is the step that does harm (11 of the 19 turned
   clean parts got worse). Options: raise MIN_FAIL_MM2, widen the bridge or overhang bands, or never turn a
   part whose studs-up layers have no mid-air start (islandMm2 = 0). Each needs a new audit.
