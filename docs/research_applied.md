@@ -14,17 +14,17 @@ Statuses: **done** (already in the site before this change, code cited), **appli
 
 | # | Finding | Source | Status |
 |---|---|---|---|
-| 1 | LDraw display studs are undersized 16-gons (4.71 mm) and must be replaced before printing; fix at the shared primitive, not per part | SKILL:286-287; memory/patterns-from-errors ("Display models are not manufacturing models") | done for `stud.dat` and the tube `stud4.dat` (parts.js:47-65). **applied**: the same rule now also covers open studs `stud2`/`stud2a` (44 + 24 of the 415 audited parts) and the tube `stud4a` (16 parts), parts.js:65. Measured open stud on 85861: 4.708 -> 5.000 mm across |
-| 2 | Printed studs must be oversize: 4.85-5.1 mm; MachineBlocks 5.00, Klemmbrick 5.04 (FDM, measured, 2,800+ prints), LEGO.scad 4.94-5.03, brickify 4.85 | SKILL:285, 295-297; memory/lego-geometry-references | **applied**: 4.90 -> 5.00 mm (parts.js:19). Both FDM-proven references agree to 0.04 mm; took MachineBlocks' 5.00 (the lower one, fit test adds more). Measured 3001/3020/3003/3024: 4.900 -> 5.000 |
+| 1 | LDraw display studs are undersized 16-gons (4.71 mm) and must be replaced before printing; fix at the shared primitive, not per part | SKILL:286-287; memory/patterns-from-errors ("Display models are not manufacturing models") | done for `stud.dat` and the tube `stud4.dat`. **applied**: the tube variant `stud4a` (16 of the 415 audited parts) now gets the same tube (parts.js:56-61). Tried and reverted for open studs `stud2`/`stud2a`: the sideways open studs of 4070 and 87087 then sliced with 0.4-0.9 mm2 starting in mid-air (3 runs each), 0/0/0 with LDraw's own; open studs stay LDraw's 4.708 mm |
+| 2 | Printed studs must be oversize: 4.85-5.1 mm; MachineBlocks 5.00, Klemmbrick 5.04 (FDM, measured, 2,800+ prints), LEGO.scad 4.94-5.03, brickify 4.85 | SKILL:285, 295-297; memory/lego-geometry-references | **applied**: 4.90 -> 5.00 mm (parts.js:20). Both FDM-proven references agree to 0.04 mm; took MachineBlocks' 5.00 (the lower one, fit test adds more). Measured 3001/3020/3003/3024: 4.900 -> 5.000 |
 | 3 | Stud height 1.6-1.8 mm (MachineBlocks 1.6, Klemmbrick 1.8) | SKILL:296 | done (parts.js:27, 1.7 mm; was uncommitted work, committed now). Measured 1.300 -> 1.700 |
-| 4 | 0.2-0.6 mm room above studs inside a hollow | SKILL:285-286 | done: plate hollow 2.2 - stud 1.7 = 0.5 mm (parts.js:117-121). Measured: hollow 2.200, stud 1.700 |
-| 5 | Plate hollow 2.2 mm deep under a 1.0 mm roof (MachineBlocks; LDraw 1.6 under 1.6) | SKILL:297; memory/lego-geometry-references | done (parts.js:214-247, uncommitted work committed now). Measured 3020: 1.600/1.600 -> 2.200/1.000; 3024 the same |
-| 6 | Footprint 0.075-0.1 mm smaller per side than the 8 mm grid (2x4 = 31.8 x 15.8; LDraw 32.0) | SKILL:296 | done (parts.js:121, `SIDE_GAP` 0.1; round parts parts.js:193). MachineBlocks 0.1 vs Klemmbrick 0.075: both FDM, took 0.1 (code value, Klemmbrick's is read off a preview mesh). Measured 3001: 32.000 x 16.000 -> 31.800 x 15.800; 1x1 round 3062b 8.000 -> 7.800 |
-| 7 | Tube outer diameter: MachineBlocks 6.41, Klemmbrick 6.53, LEGO.scad 6.45, LEGO 6.51 | memory/lego-geometry-references | not applied: kept 6.51 (parts.js:19). The FDM references disagree by 0.12 mm; 6.51 sits with Klemmbrick's measured 6.53, and the user's first fit test with LDraw's 6.40 tubes didn't clutch. Measured 6.510 before and after |
+| 4 | 0.2-0.6 mm room above studs inside a hollow | SKILL:285-286 | done: plate hollow 2.2 - stud 1.7 = 0.5 mm (parts.js:105-114). Measured: hollow 2.200, stud 1.700 |
+| 5 | Plate hollow 2.2 mm deep under a 1.0 mm roof (MachineBlocks; LDraw 1.6 under 1.6) | SKILL:297; memory/lego-geometry-references | done (parts.js:226-259, uncommitted work committed now). Measured 3020: 1.600/1.600 -> 2.200/1.000; 3024 the same |
+| 6 | Footprint 0.075-0.1 mm smaller per side than the 8 mm grid (2x4 = 31.8 x 15.8; LDraw 32.0) | SKILL:296 | done (parts.js:114, `SIDE_GAP` 0.1; round parts parts.js:205). MachineBlocks 0.1 vs Klemmbrick 0.075: both FDM, took 0.1 (code value, Klemmbrick's is read off a preview mesh). Measured 3001: 32.000 x 16.000 -> 31.800 x 15.800; 1x1 round 3062b 8.000 -> 7.800. **applied** (fix): the gap used to move only the wall faces that passed the inside test, leaving 0.1 mm slivers (3659: a strip at y = -3.95 starting in mid-air at z 1.4, 7.5 mm2) and side studs 0.1 mm off their wall (87087). Now a wall plane moves whole, with everything standing up to 2 mm out of it, and a plane with other geometry on it (98263's ball socket) keeps its full size (parts.js:113, 179-201). Support check after: 3659, 87087, 4070 "prints as is" (d2b887c: the same) |
+| 7 | Tube outer diameter: MachineBlocks 6.41, Klemmbrick 6.53, LEGO.scad 6.45, LEGO 6.51 | memory/lego-geometry-references | not applied: kept 6.51 (parts.js:20). The FDM references disagree by 0.12 mm; 6.51 sits with Klemmbrick's measured 6.53, and the user's first fit test with LDraw's 6.40 tubes didn't clutch. Measured 6.510 before and after |
 | 8 | Outer wall: MachineBlocks 1.5 (+0.1 ribs), Klemmbrick 1.2 | memory/lego-geometry-references | done: LDraw's 1.6 wall minus the 0.1 side gap = 1.5 (from the code, not measured) |
 | 9 | Brick roof 1.6, cavity 8.0 (Klemmbrick) | memory/lego-geometry-references | done (LDraw's own). Measured 3001: hollow 8.000, roof 1.600 |
 | 10 | 1xN underside pin (`stud3`, 64 audited parts) | no research number | not applied: none of the references give a printed pin size; left as LDraw's 16-gon (noted in parts.js:15) |
-| 11 | Source meshes are often not watertight; hand-made primitives can be wound inside-out without any slicer complaining | memory/patterns-from-errors | **applied**: every replaced stud and tube is turned outward if it came out inside-out (parts.js:54-60, 246-275). Found while checking this change: upside-down tubes (3062a, 85861) and the mirrored sideways open stud of 4070 and 87087 came out inside-out through three.js. 4070 sliced alone, 3 runs each: 32 / 32 / 0 mm2 mid-air before the fix, 0 / 0 / 0 after (d2b887c: 0 / 0 / 0). Studs stay open at the bottom where they stand on the top face, like LDraw's and like before (3001: 768 open edges before and after). Closing them with a bottom face was tried and reverted: the support check read those faces as undersides and put 24 pillars on the 6x8 plate 3036 (471.75 mm2 "unsupported", 0.6 s -> 119 s). Round parts gain open edges where LDraw's own 16-sided faces now end against the 96-sided tube or open stud (3062b 0 -> 224, 85861 32 -> 256), all at one height; the slicer result below covers whether that matters |
+| 11 | Source meshes are often not watertight; hand-made primitives can be wound inside-out without any slicer complaining | memory/patterns-from-errors | **applied**: every replaced stud and tube is turned outward if it came out inside-out (parts.js:50-56, 263-289); upside-down tubes in 3062a and 85861 came out inside-out through three.js. Studs stay open at the bottom where they stand on the top face, as before (3001: 768 open edges before and after); closing them with a bottom face was tried and reverted: the support check read those faces as undersides and put 24 pillars on the 6x8 plate 3036 (0.6 s -> 119 s) |
 | 12 | Nominal zero-clearance dimensions never survive printing; zero clearance is a transition fit | memory/patterns-from-errors; digests/tolerances-fits.md:18 | done: oversize studs, side gap, headroom (rows 2-6) |
 
 ## Orientation and supports
@@ -126,30 +126,38 @@ commit, same LDraw library:
 | 3001 brick 2x4 | 32.000 x 16.000 -> 31.800 x 15.800 | 4.900 / 1.300 -> 5.000 / 1.700 | 6.510 -> 6.510 | brick: 8.000 / 1.600 both |
 | 3020 plate 2x4 | 32.000 x 16.000 -> 31.800 x 15.800 | 4.900 / 1.300 -> 5.000 / 1.700 | 6.510 -> 6.510 | 1.600 / 1.600 -> 2.200 / 1.000 |
 | 3024 plate 1x1 | 8.000 -> 7.800 | 4.900 / 1.300 -> 5.000 / 1.700 | - | 1.600 / 1.600 -> 2.200 / 1.000 |
-| 85861 round plate 1x1, open stud | 8.000 -> 7.800 | 4.708 / 1.600 -> 5.000 / 1.700 | - | - |
-| 3062b round brick 1x1 | 8.000 -> 7.800 | 4.708 / 1.600 -> 5.000 / 1.700 | - | - |
+| 85861 round plate 1x1, open stud | 8.000 -> 7.800 | 4.708 / 1.600, unchanged (open studs stay LDraw's) | - | - |
+| 3062b round brick 1x1 | 8.000 -> 7.800 | 4.708 / 1.600, unchanged (open stud) | - | - |
 
 The same numbers were read back from the objects inside the written project file for set 10696 (3001, 3003,
 3004, 3020, 3062b, 3710), not only from the in-memory meshes. No non-manifold edges on any measured part.
 
 Slicing (Bambu Studio CLI, P1S profile written by the site, slicer supports off):
 
-- `audit/test_project.mjs` (4-plate, 3-colour project: 3001, 3020, 3005): PASS, every plate on its own filament.
-- Set 10696 (Medium Creative Brick Box, 92 unique parts, 35 plates: plain bricks such as plate 12 (3001, 3040b),
-  plates such as plate 9 (3036 6x8), parts needing supports such as plate 20 (30414 side studs) and 3659) built
-  headless with `audit/build_set.mjs` and sliced one plate per CLI run, 180 s limit each: 35 of 35 sliced.
-  The embedded G-code header confirms `reduce_crossing_wall = 1`, `brim_type = no_brim`,
-  `elefant_foot_compensation = 0.15`, `wall_generator = arachne`, `seam_position = back`.
-- Mid-air area from the G-code (audit/worker.mjs `gcodeStats`), one run per version, so treat small
-  differences as noise (earlier runs varied by tens of mm2): d2b887c 26 of 35 plates under 0.5 mm2, 1,358.8 mm2
-  in total, 2,005 min estimated; this commit 22 of 35, 2,058.6 mm2, 2,116 min (+5.5%, bigger studs and
-  crossing-wall travel). Plates worse in this run: 3 (784 -> 1,478; the same code sliced as one project gave
-  775), 11 (0 -> 2.2), 18 (0 -> 0.7), 20 (12.6 -> 27.9), 21 (0 -> 0.6), 27 (1.2 -> 6.5), 34 (0 -> 10.9).
-  Single parts sliced 3 times each: 3659 (an arch, plate 34) 0 / 0 / 0 at d2b887c and 6.1 / 5.9 / 4.5 with the
-  side gap and plate hollows alone (before this change's stud work), 5.5 / 5.5 / 3.3 now: the regression comes
-  from the print-fit geometry, not from the studs. 87087 (1x1 brick, side stud) 0 -> 0.2 mm2 with one pillar:
-  its side stud is now 5.00 mm and sticks out further.
-- Support check time: 92438 (8x16 plate) took 1,354 s in `autoSupport`; the 6x8 plate 3036 0.6 s.
+- `node audit/test_project.mjs` (4-plate, 3-colour project: 3001, 3020, 3005; serves the LDraw library itself
+  through audit/ldraw.mjs): PASS, every plate on its own filament.
+- Set 10696 (Medium Creative Brick Box, 92 unique parts, 35 plates) built headless and sliced with
+  `node audit/build_set.mjs 10696 <dir> --slice 3`: one CLI run per plate, 3 runs each, 180 s limit per run
+  (the CLI sometimes stalls at start-up: one thread, under 1 s CPU, no log), all 105 runs sliced. The G-code
+  header confirms `reduce_crossing_wall = 1`, `brim_type = no_brim`, `elefant_foot_compensation = 0.15`,
+  `wall_generator = arachne`, `seam_position = back`.
+- Mid-air area is read from the G-code by audit/gcode.mjs (worker.mjs's method, plus arcs followed along the
+  arc). The slicer itself is not repeatable: identical files gave plate 3 786.7-1,459.6 mm2 and plate 9
+  94.3-146.7 mm2 across 3 runs, so versions are compared by the median of 3 and a plate counts as clean when all
+  3 slice and the median is under 0.5 mm2.
+- Result, d2b887c vs this commit (median of 3, same method): clean plates 26 vs 26 of 35; total median mid-air
+  1,753.5 vs 1,733.0 mm2; 2,007 vs 2,109 min estimated (+5.1%: bigger, taller studs and crossing-wall travel).
+  Changed: plate 21 0.6 -> 0 (cleaner), plate 25 0 -> 0.9: its 85984 slope reads 0-0.4 mm2 per run at both
+  versions (3 single-part runs each: d2b887c 0.2/0/0.4, now 0.4/0.4/0), so that one is slicer noise.
+- Single parts, 3 runs each, mid-air mm2: 3659 0/0/0, 87087 0/0/0, 4070 0/0/0 (before the fixes in this
+  round: 3659 5.5/5.5/3.3, 87087 0.2/0.2/0, 4070 0.4/0/0.7).
+- What caused those: the side gap moved only some faces of a wall (3659 kept 0.1 mm slivers starting in
+  mid-air at z 1.4; 87087's side stud was left 0.1 mm off its wall); the replaced open stud made the sideways
+  open studs of 4070 and 87087 start small regions in mid-air. Fixed by moving whole wall planes (or none)
+  and by keeping LDraw's open studs.
+- Support check time: 92438 (8x16 plate) took 1,340-1,354 s in `autoSupport` (not compared with d2b887c); the
+  6x8 plate 3036 0.6 s.
 
 Not tested: a real print and fit test of any of these numbers; the site in a browser (only the modules were
-loaded and checked in Node); the 415-part audit (`audit/run.mjs`) was not rerun.
+loaded and checked in Node); the 415-part audit (`audit/run.mjs`) was not rerun, and its worker still uses the
+old chord-based mid-air reading (worker.mjs has another session's uncommitted edits, so it was not touched).

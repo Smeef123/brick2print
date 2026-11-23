@@ -10,14 +10,14 @@ const LDU_MM = 0.4;            // 1 LDraw unit = 0.4 mm
 // LDraw is drawn for screens: its stud is a 16-sided cylinder (4.71 mm across the flats, LEGO 4.80)
 // and its underside tube is 6.40 mm across (LEGO 6.51). Printed, those don't clutch at all. Parts
 // build their studs and tubes from shared primitives, so every common one is replaced here with a
-// 96-sided cylinder whose flats sit at the printable size: solid studs (stud.dat), open studs
-// (stud2/stud2a, same outside), tubes (stud4/stud4a). LDraw units: 1 LDU = 0.4 mm, -Y is up.
-// Not replaced (no printed reference number yet): the 1xN underside pin stud3 and rarer variants.
+// 96-sided cylinder whose flats sit at the printable size: solid studs (stud.dat) and tubes
+// (stud4/stud4a). LDraw units: 1 LDU = 0.4 mm, -Y is up. Not replaced: the 1xN underside pin stud3 (no
+// printed reference number) and open studs stud2/stud2a (replaced, the sideways open studs of 4070 and
+// 87087 sliced with 0.4-0.9 mm2 starting in mid-air, 0 with LDraw's own).
 const SEGS = 96, FLAT = 1 / Math.cos(Math.PI / SEGS);   // corner radius that puts the flats on size
 // Studs 5.00 mm across: MachineBlocks 5.00, Klemmbrick 5.04 (measured, 2,800+ prints); research/fdm-printing SKILL.md:285,295.
 // Tubes stay 6.51 (LEGO; Klemmbrick 6.53, MachineBlocks 6.41). The fit test then tunes both in 0.05 mm steps.
 const STUD_R = (2.5 / LDU_MM) * FLAT, TUBE_R = (3.255 / LDU_MM) * FLAT, TUBE_HOLE_R = (2.4 / LDU_MM) * FLAT;
-const OPEN_STUD_HOLE_R = (1.6 / LDU_MM) * FLAT;          // LDraw's open-stud hole (4 LDU), now round at size
 function ring(r, y) { return Array.from({ length: SEGS }, (_, k) => [r * Math.cos((2 * Math.PI * k) / SEGS), y, r * Math.sin((2 * Math.PI * k) / SEGS)]); }
 const P = (p) => p.map((v) => +v.toFixed(4)).join(' ');
 // type-4 quads / type-3 triangles, wound counter-clockwise seen from outside (BFC CERTIFY CCW)
@@ -26,16 +26,13 @@ const P = (p) => p.map((v) => +v.toFixed(4)).join(' ');
 // (MachineBlocks' value), leaving 0.5 mm above the stud for the printed roof's droop.
 const STUD_H = 1.7 / LDU_MM;
 // A stud standing on the part's top face, open at the bottom like LDraw's. (Closing it with a bottom
-// face made the support check read 471 mm2 of 3036's top as unsupported and pillar it.) hole > 0: open stud.
-function studDat(hole = 0) {
+// face made the support check read 471 mm2 of 3036's top as unsupported and pillar it.)
+function studDat() {
   const lo = ring(STUD_R, 0), hi = ring(STUD_R, -STUD_H), out = ['0 Set2Print print-accurate stud', '0 BFC CERTIFY CCW'];
-  const iLo = ring(hole, 0), iHi = ring(hole, -STUD_H);
   for (let k = 0; k < SEGS; k++) {
     const k2 = (k + 1) % SEGS;
     out.push(`4 16 ${P(lo[k2])} ${P(hi[k2])} ${P(hi[k])} ${P(lo[k])}`);   // side, facing out
-    if (!hole) { out.push(`3 16 0 ${P([-STUD_H])} 0 ${P(hi[k])} ${P(hi[k2])}`); continue; }   // top, facing up (-Y)
-    out.push(`4 16 ${P(iLo[k])} ${P(iHi[k])} ${P(iHi[k2])} ${P(iLo[k2])}`);   // hole wall, facing the hole
-    out.push(`4 16 ${P(hi[k2])} ${P(iHi[k2])} ${P(iHi[k])} ${P(hi[k])}`);     // top ring, facing up
+    out.push(`3 16 0 ${P([-STUD_H])} 0 ${P(hi[k])} ${P(hi[k2])}`);          // top, facing up (-Y)
   }
   return out.join('\n') + '\n';
 }
@@ -53,15 +50,15 @@ function tubeDat() {
 }
 // Our faces carry their own colour code so toMesh() can find them and turn any stud or tube that came
 // out inside-out right side out: through three.js some references flip the winding (upside-down tubes
-// in 3062a and 85861, the mirrored side open stud of 4070 and 87087, which then sliced with mid-air).
+// in 3062a and 85861 came out inside-out while 3001's were fine).
 const OWN = '9716';
 const own = (text) => text.replace('0 BFC CERTIFY CCW', `0 BFC CERTIFY CCW\n0 !COLOUR Set2Print_Primitive CODE ${OWN} VALUE #808080 EDGE #333333`).replace(/^([34]) 16 /gm, `$1 ${OWN} `);
-const OPEN = own(studDat(OPEN_STUD_HOLE_R)), TUBE = own(tubeDat());
-const PRINT_PRIMITIVES = { 'stud.dat': own(studDat()), 'stud2.dat': OPEN, 'stud2a.dat': OPEN, 'stud4.dat': TUBE, 'stud4a.dat': TUBE };
+const TUBE = own(tubeDat());
+const PRINT_PRIMITIVES = { 'stud.dat': own(studDat()), 'stud4.dat': TUBE, 'stud4a.dat': TUBE };
 const dataUrl = (text) => 'data:text/plain;charset=utf-8,' + encodeURIComponent(text);
 const loader = new LDrawLoader();
 loader.manager.setURLModifier((url) => {
-  const m = /\/(?:parts|p)\/(stud(?:2a?|4a?)?\.dat)$/i.exec(url);
+  const m = /\/(?:parts|p)\/(stud(?:4a?)?\.dat)$/i.exec(url);
   return m ? dataUrl(PRINT_PRIMITIVES[m[1].toLowerCase()]) : url;
 });
 loader.setPartsLibraryPath(LIB);
@@ -113,6 +110,7 @@ export async function loadPart(id) {
 //    1.6 mm above the bottom it opens onto moves up 0.6 mm (MachineBlocks: 2.2 deep, 1.0 roof),
 //    if at least 0.8 mm of roof stays. Tubes and pins under it grow with it.
 // Inside/outside is a winding number along a vertical line (BFC-certified LDraw winding).
+const SIDE_REACH = 2.0;   // how far beyond a moved wall features move with it (a side stud stands 1.7)
 const SIDE_GAP = 0.1, HOLLOW_GROW = 0.6, PLATE_HOLLOW = 1.6, MIN_ROOF = 0.8, PITCH = 8, PROBE = 0.05;
 function printFit(verts, tris) {
   const T = [];
@@ -178,10 +176,29 @@ function printFit(verts, tris) {
     for (const w of walls) { const q = (Math.round(w.phase * 100) / 100) % PITCH; score.set(q, (score.get(q) || 0) + w.t.area); }
     const best = [...score].sort((a, b) => b[1] - a[1])[0];
     if (!best || Math.min(best[0] % 4, 4 - (best[0] % 4)) > 0.01) continue;
+    // Move the wall's whole plane, not just the faces that passed the inside test, and everything standing
+    // out of it (side studs): moving only some faces left 0.1 mm slivers on 3659's face and a side stud
+    // 0.1 mm off 87087's wall, both starting in mid-air.
+    const planes = new Map();   // "coordinate|out" -> extent of the moved faces in the other two axes
+    const k2 = 1 - k;
     for (const w of walls) {
       const d = Math.abs(w.phase - best[0]);
       if (Math.min(d, PITCH - d) > 0.01) continue;
-      for (const i of w.t.ix) shift(i, k, -w.out * SIDE_GAP);
+      const key = Math.round(w.t.c[k] * 100) + '|' + w.out, r = planes.get(key) || { c: w.t.c[k], out: w.out, a0: Infinity, a1: -Infinity, z0: Infinity, z1: -Infinity };
+      for (const p of w.t.p) { r.a0 = Math.min(r.a0, p[k2]); r.a1 = Math.max(r.a1, p[k2]); r.z0 = Math.min(r.z0, p[2]); r.z1 = Math.max(r.z1, p[2]); }
+      planes.set(key, r);
+    }
+    // A plane with geometry on or just beyond it outside the moved faces (98263's ball socket grows out of its
+    // side) keeps its full size: moving only part of it would leave a step that starts in mid-air.
+    for (const r of planes.values()) {
+      const take = [];
+      let clean = true;
+      for (let i = 0; i < verts.length / 3 && clean; i++) {
+        const beyond = r.out * (verts[3 * i + k] - r.c), a = verts[3 * i + k2], z = verts[3 * i + 2];
+        if (beyond < -1e-3 || beyond > SIDE_REACH) continue;
+        if (a >= r.a0 - 1e-3 && a <= r.a1 + 1e-3 && z >= r.z0 - 1e-3 && z <= r.z1 + 1e-3) take.push(i); else clean = false;
+      }
+      if (clean) for (const i of take) shift(i, k, -r.out * SIDE_GAP);
     }
   }
 

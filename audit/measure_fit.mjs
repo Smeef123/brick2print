@@ -1,13 +1,14 @@
 // Measure the clutch geometry of a brick mesh against LEGO's numbers.
-//   node audit/measure_fit.mjs [part]   (LDraw library served on port 8767)
+//   node audit/measure_fit.mjs [part]   (serves the local LDraw library itself)
 // Slices the mesh at a few heights and reports, at the stud and in the hollow underside:
 //   stud radius (to the flats and to the corners of the polygon), tube outer radius,
 //   distance from a stud position to the inner wall. LEGO: stud 4.8 mm across (r 2.4),
 //   tube 6.51 mm across (r 3.255), so a stud touches the tube and the wall with ~0 clearance.
 import './polyfill.mjs';
-import { setLibrary, loadPart } from '../parts.js';
+import { loadPart } from '../parts.js';
+import { useLocalLibrary } from './ldraw.mjs';
 
-setLibrary('http://127.0.0.1:8767/');
+await useLocalLibrary();
 const id = process.argv[2] || '3001';
 const g = await loadPart(id);
 const { verts, tris, size } = g.mesh;
