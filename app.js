@@ -215,7 +215,7 @@ async function build() {
     sum({ parts: lines.reduce((a, l) => a + l.qty, 0), unique: new Set(lines.map((l) => l.ldraw)).size, colours: colours.size, plates: 0, missing: 0 });
 
     // load geometry, 4 at a time
-    let done = 0, missing = 0;
+    let done = 0, missing = 0, unloaded = 0;   // unloaded: download failed, a new build tries again
     const queue = lines.map((l, i) => [l, i]);
     const worker = async () => {
       while (queue.length) {
@@ -224,7 +224,8 @@ async function build() {
         let failed = '';
         const g = await loadPart(l.ldraw, l.name).catch((e) => { failed = e.message; return null; });
         l.geom = g && (fins ? await supported(g) : g);
-        if (!g) { setRow(i, 'bad', failed ? 'load failed: ' + failed : 'not in LDraw'); missing++; }
+        if (!g && failed) { setRow(i, 'bad', 'load failed: ' + failed); unloaded++; }
+        else if (!g) { setRow(i, 'bad', 'not in LDraw'); missing++; }
         else if (!fins || !l.geom.support || l.geom.support.note === 'prints as is') setRow(i, 'ok', 'ready');
         else setRow(i, l.geom.support.unserved ? 'skip' : 'ok', l.geom.support.note);
         done++; status(`Loading parts ${done} / ${lines.length}`);
@@ -270,7 +271,7 @@ async function build() {
       lastName = base + '.3mf';
       $('dl').hidden = false;
     }
-    status(`Done: ${plateCount} plate${plateCount === 1 ? '' : 's'}${missing ? `, ${missing} part(s) not in the library` : ''}${tooBig.length ? `, ${tooBig.length} too big for the bed` : ''} (marked in the table below).`);
+    status(`Done: ${plateCount} plate${plateCount === 1 ? '' : 's'}${missing ? `, ${missing} part(s) not in the library` : ''}${unloaded ? `, ${unloaded} part(s) could not be downloaded (build again to retry)` : ''}${tooBig.length ? `, ${tooBig.length} too big for the bed` : ''} (marked in the table below).`);
   } catch (e) {
     status(e.message || String(e));
   } finally {

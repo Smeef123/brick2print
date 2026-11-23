@@ -262,7 +262,7 @@ try {
   const unfinished = (e) => ({ status: 'did not finish: ' + e.message.split('\n')[0], rows: [] });
   await p2.fill('#listtext', '3001,4,1\n3003,4,1');
   const w1 = await build(p2, 120000).catch(unfinished);
-  check(/^Done/.test(w1.status) && w1.rows.length === 2 && w1.rows.every((r) => /failed/.test(r[4])), `broken worker: build ends, rows say why (${w1.rows.map((r) => r[4]).join(' | ') || w1.status})`);
+  check(/^Done/.test(w1.status) && w1.rows.length === 2 && w1.rows.every((r) => /failed/.test(r[4])) && /2 part\(s\) could not be downloaded/.test(w1.status) && !/not in the library/.test(w1.status), `broken worker: build ends, rows and status say why (${w1.status} | ${w1.rows.map((r) => r[4]).join(' | ')})`);
   await p2.unroute('**/site_worker.js*', broken);
   await p2.fill('#listtext', '3020,4,1\n3024,4,1');
   const w2 = await build(p2, 120000).catch(unfinished);
