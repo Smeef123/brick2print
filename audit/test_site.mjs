@@ -1,7 +1,7 @@
 // Check the site itself in headless Chrome, every path a visitor uses, and slice what it downloads in the
 // Bambu Studio CLI (every plate must get G-code, each on its own filament). Exits 1 on any failure.
 //   node audit/test_site.mjs [local|<url>] [desktop|phone]   (FLAKY=0.05: local server answers 5% of library requests 503)
-// local serves this checkout (or SITE_DIR, e.g. the publish workflow's _site) on 127.0.0.1:8768, with ldraw/ from
+// local serves this checkout (or SITE_DIR, e.g. the publish workflow's _site) on a free 127.0.0.1 port (parallel runs don't collide), with ldraw/ from
 // LDRAW_DIR (default C:/Users/Connor/tools/ldraw) when the site folder has none.
 // Needs `npm install` in audit/ (playwright-core) and Chrome (CHROME=path to override); the browser is headless.
 // Without Bambu Studio (BAMBU=path to override; none on the publish workflow's Linux runner) the downloads are
@@ -45,9 +45,9 @@ if (where === 'local') {
     res.writeHead(200, { 'Content-Type': types[path.extname(p)] || 'application/octet-stream', 'Cache-Control': 'no-store' });
     fs.createReadStream(p).pipe(res);
   });
-  await new Promise((ok, no) => server.once('error', no).listen(8768, '127.0.0.1', ok));
+  await new Promise((ok, no) => server.once('error', no).listen(0, '127.0.0.1', ok));
   server.unref();
-  url = 'http://127.0.0.1:8768/';
+  url = `http://127.0.0.1:${server.address().port}/`;
 }
 
 // what the downloaded project holds: plates (name, objects, filament), filament colours, settings

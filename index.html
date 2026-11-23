@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Set2Print</title>
+<title>Brick2Print</title>
 <meta name="description" content="Turn a brick set's parts list into ready-to-print 3MF plates, sorted by colour. Free, runs in your browser.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
@@ -108,7 +108,7 @@ footer a{color:inherit}
 <div class="app">
 <main>
   <header>
-    <div class="brand"><div class="studs" aria-hidden="true"><i></i><i></i><i></i><i></i></div><h1>Set2Print</h1></div>
+    <div class="brand"><div class="studs" aria-hidden="true"><i></i><i></i><i></i><i></i></div><h1>Brick2Print</h1></div>
     <p class="lede">Turn a brick set's parts list into ready-to-print 3MF plates, one batch per colour. Everything runs in your browser: parts come from the LDraw library and nothing is uploaded.</p>
   </header>
 
@@ -151,7 +151,7 @@ footer a{color:inherit}
 
   <section class="card" aria-labelledby="fit-h">
     <h2 id="fit-h">Fit test</h2>
-    <p class="hint">Before a big set, print a 2×4 brick and a 2×4 plate (about 20 minutes), try them on real bricks, and tell Set2Print how they fit. It adjusts the settings for every build; repeat until both are just right. Printed bricks grip each other harder than they grip real ones (their layer lines interlock), so also try two printed parts together. Fit changes with filament brand and even colour, so test again when you switch. If only the bottom edge of the underside is tight, that is first-layer flare: raise elephant-foot compensation in Bambu Studio (Quality, Precision) from 0.15 mm toward 0.2 mm.</p>
+    <p class="hint">Before a big set, print a 2×4 brick and a 2×4 plate (about 20 minutes), try them on real bricks, and tell Brick2Print how they fit. It adjusts the settings for every build; repeat until both are just right. Printed bricks grip each other harder than they grip real ones (their layer lines interlock), so also try two printed parts together. Fit changes with filament brand and even colour, so test again when you switch. If only the bottom edge of the underside is tight, that is first-layer flare: raise elephant-foot compensation in Bambu Studio (Quality, Precision) from 0.15 mm toward 0.2 mm.</p>
     <button id="fit" class="secondary">Build fit-test plate</button>
     <div class="fitrow"><span>Studs <small>(real brick pressed onto yours)</small></span>
       <div class="seg"><button data-part="studs" data-fit="tight">Too tight</button><button data-part="studs" data-fit="good">Just right</button><button data-part="studs" data-fit="loose">Too loose</button></div></div>
@@ -182,7 +182,7 @@ footer a{color:inherit}
   </section>
 
   <footer>
-    <p>Output: one Bambu Studio project (.3mf) with every plate, one filament per colour, settings included. Pick your printer before opening it: switching the printer profile afterwards can throw parts off their plates. Parts print studs-up with slicer supports off; Set2Print has already added any pillars and <a href="https://printfins.com" target="_blank" rel="noopener">Support Fins</a> a part needs.</p>
+    <p>Output: one Bambu Studio project (.3mf) with every plate, one filament per colour, settings included. Pick your printer before opening it: switching the printer profile afterwards can throw parts off their plates. Parts print studs-up with slicer supports off; Brick2Print has already added any pillars and <a href="https://printfins.com" target="_blank" rel="noopener">Support Fins</a> a part needs.</p>
     <p>Part geometry: <a href="https://www.ldraw.org" target="_blank" rel="noopener">LDraw.org</a> parts library (CC BY 4.0, older parts CC BY 2.0, by its many authors). Set inventories and colours: <a href="https://rebrickable.com" target="_blank" rel="noopener">Rebrickable</a>. Loader: three.js.</p>
     <p>LEGO® is a trademark of the LEGO Group, which does not sponsor, authorize or endorse this site. For personal use; don't sell prints of trademarked designs.</p>
   </footer>

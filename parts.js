@@ -31,7 +31,7 @@ const STUD_H = 1.7 / LDU_MM;
 // A stud standing on the part's top face, open at the bottom like LDraw's. (Closing it with a bottom
 // face made the support check read 471 mm2 of 3036's top as unsupported and pillar it.)
 function studDat() {
-  const lo = ring(STUD_R, 0), hi = ring(STUD_R, -STUD_H), out = ['0 Set2Print print-accurate stud', '0 BFC CERTIFY CCW'];
+  const lo = ring(STUD_R, 0), hi = ring(STUD_R, -STUD_H), out = ['0 Brick2Print print-accurate stud', '0 BFC CERTIFY CCW'];
   for (let k = 0; k < SEGS; k++) {
     const k2 = (k + 1) % SEGS;
     out.push(`4 16 ${P(lo[k2])} ${P(hi[k2])} ${P(hi[k])} ${P(lo[k])}`);   // side, facing out
@@ -41,7 +41,7 @@ function studDat() {
 }
 function tubeDat() {
   const oLo = ring(TUBE_R, 0), oHi = ring(TUBE_R, -4), iLo = ring(TUBE_HOLE_R, 0), iHi = ring(TUBE_HOLE_R, -4);
-  const out = ['0 Set2Print print-accurate underside tube', '0 BFC CERTIFY CCW'];
+  const out = ['0 Brick2Print print-accurate underside tube', '0 BFC CERTIFY CCW'];
   for (let k = 0; k < SEGS; k++) {
     const k2 = (k + 1) % SEGS;
     out.push(`4 16 ${P(oLo[k2])} ${P(oHi[k2])} ${P(oHi[k])} ${P(oLo[k])}`);   // outer wall, facing out
@@ -58,7 +58,7 @@ const OWN = '9716';
 // Marked Primitive like the files they replace: three.js merges primitives into their parent with the
 // reference's matrix, but loads any other file as its own group, and a group inside a primitive (stud4 in
 // stug4-7x7) loses the primitive's matrix. Unmarked, 92438's 128 studs and 105 tubes piled up mid-part.
-const own = (text) => text.replace('0 BFC CERTIFY CCW', `0 !LDRAW_ORG Primitive\n0 BFC CERTIFY CCW\n0 !COLOUR Set2Print_Primitive CODE ${OWN} VALUE #808080 EDGE #333333`).replace(/^([34]) 16 /gm, `$1 ${OWN} `);
+const own = (text) => text.replace('0 BFC CERTIFY CCW', `0 !LDRAW_ORG Primitive\n0 BFC CERTIFY CCW\n0 !COLOUR Brick2Print_Primitive CODE ${OWN} VALUE #808080 EDGE #333333`).replace(/^([34]) 16 /gm, `$1 ${OWN} `);
 const TUBE = own(tubeDat());
 const PRINT_PRIMITIVES = { 'stud.dat': own(studDat()), 'stud4.dat': TUBE, 'stud4a.dat': TUBE };
 const dataUrl = (text) => 'data:text/plain;charset=utf-8,' + encodeURIComponent(text);
@@ -124,7 +124,7 @@ function parseAsync(text) {
 const shapeCache = new Map();   // LDraw file name -> { name, mesh } or null
 async function buildShape(name) {
   const before = libFailures.length;
-  const group = await parseAsync(`0 Set2Print\n1 16 0 0 0 1 0 0 0 1 0 0 0 1 ${name}.dat\n`).catch((e) => { newLoader(); throw e; });
+  const group = await parseAsync(`0 Brick2Print\n1 16 0 0 0 1 0 0 0 1 0 0 0 1 ${name}.dat\n`).catch((e) => { newLoader(); throw e; });
   // three.js skips a sub-file that failed to download: the part would ship with pieces missing
   if (libFailures.length > before) { newLoader(); throw new Error(`part of ${name} could not be downloaded (${libFailures[before]})`); }
   const mesh = toMesh(group);

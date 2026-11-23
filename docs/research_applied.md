@@ -1,6 +1,6 @@
-# Printing research applied to Set2Print
+# Printing research applied to Brick2Print
 
-Every finding in the printing research that could bear on printed bricks or on what Set2Print writes,
+Every finding in the printing research that could bear on printed bricks or on what Brick2Print writes,
 checked against the code (2026-11-22). Sources: `SKILL` = `C:\Users\Connor\.claude\skills\fdm-printing\SKILL.md`,
 `digests/` = `C:\Users\Connor\tools\print-research\digests\`, `memory/` = the session's measured-reference notes
 (lego-geometry-references.md, patterns-from-errors.md). "Measured" numbers come from `audit/out/measure_all.mjs`
@@ -69,7 +69,7 @@ Statuses: **done** (already in the site before this change, code cited), **appli
 | 43 | Hotter, less cooling for layer bonding | SKILL:79 | not applied: Generic PLA defaults kept; no brick evidence |
 | 44 | Bambu holes print 0.15-0.2 mm small at 0 compensation; 0.1 fixes circles, not squares | SKILL:173; digests/tolerances-fits.md:5 | not applied as a default: one X1C report, and brick hollows are square; the fit test sets hole compensation per printer |
 | 45 | Project presets live only in the .3mf | SKILL:282 | done (export3mf.js projectFile writes project_settings.config) |
-| 46 | MakerWorld rejects "Lego" in titles, tags and profiles | SKILL:302-303; digests/lego-printing.md:5-14 | **applied**: the embedded profile is named "Set2Print Bricks 0.2mm" instead of "... Lego ..." (export3mf.js:37), so a shared project isn't refused |
+| 46 | MakerWorld rejects "Lego" in titles, tags and profiles | SKILL:302-303; digests/lego-printing.md:5-14 | **applied**: the embedded profile is named "Brick2Print Bricks 0.2mm" instead of "... Lego ..." (export3mf.js:37), so a shared project isn't refused |
 
 ## Fit testing and the page's instructions
 

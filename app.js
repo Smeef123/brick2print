@@ -1,4 +1,4 @@
-// Set2Print: parts list -> LDraw geometry -> studs-up meshes in mm -> plates per colour -> one Bambu Studio .3mf.
+// Brick2Print: parts list -> LDraw geometry -> studs-up meshes in mm -> plates per colour -> one Bambu Studio .3mf.
 import { COLORS } from './colors.js';
 import { multiFilamentSettings, projectFile } from './export3mf.js';
 import { buildBed, showPlate } from './viewer.js';
@@ -201,7 +201,7 @@ async function projectSettings(layer, rgbs, bed) {
 }
 
 // ---------- UI ----------
-let lastFile = null, lastName = 'set2print.3mf';
+let lastFile = null, lastName = 'brick2print.3mf';
 
 function render(lines) {
   $('rows').innerHTML = lines.map((l, i) => `<tr id="r${i}"><td class="mono">${esc(l.part)}</td><td class="name">${esc(l.name || '')}</td>` +
@@ -350,7 +350,7 @@ async function buildFitTest() {
     const items = [{ obj: 1, cx: 108, cy: 128 }, { obj: 2, cx: 148, cy: 128 }];
     const pl = [{ name: 'Fit test', filament: 1, items: items.map((it) => ({ key: objs[it.obj - 1].label, label: objs[it.obj - 1].label, mesh: objs[it.obj - 1].mesh, cx: it.cx, cy: it.cy })) }];
     lastFile = new Blob([await projectFile(JSZip, pl, await projectSettings($('layer').value, [red.rgb], 256), 256, scale)], { type: 'model/3mf' });
-    lastName = 'set2print-fit-test.3mf';
+    lastName = 'brick2print-fit-test.3mf';
     renderPlateTabs([{ name: 'Fit test', rgb: red.rgb, scale, items: items.map((it) => ({ mesh: objs[it.obj - 1].mesh, cx: it.cx, cy: it.cy })) }]);
     $('dl').hidden = false;
     status('Fit test ready: about 20 minutes at 0.20 mm.');

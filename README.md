@@ -1,8 +1,8 @@
-# Set2Print
+# Brick2Print
 
 Turn a brick set's parts list into ready-to-print 3MF plates, one batch per colour.
 
-**Use it:** https://smeef123.github.io/set2print/
+**Use it:** https://smeef123.github.io/brick2print/
 
 - Type a set number or part of its name: every official set is built in (no account or key), refreshed every Monday from Rebrickable's free database downloads by `scripts/build_data.py`. Minifigure parts are included.
 - Or paste/upload any parts list (`part, colour, quantity`; Rebrickable CSV exports work as they are).
@@ -13,7 +13,7 @@ Turn a brick set's parts list into ready-to-print 3MF plates, one batch per colo
 
 ## Automatic supports
 
-Print with slicer supports **off**. Set2Print decides supports by geometry:
+Print with slicer supports **off**. Brick2Print decides supports by geometry:
 
 - A point on a part's underside prints as is if it lies on a straight path of at most **40 mm** between two pieces of material 0.3 mm below it (a bridge), or within **1 mm** of material below it (an overhang stepping out per layer, which allows slopes up to about 73° from vertical). For PLA on a Bambu P-series printer 20 mm bridges are ordinary and 20-50 mm a real option (50 mm printed clean on a P2S); the audit found parts that printed fine studs-up with bridges past 20 mm.
 - The part is also sliced into 0.2 mm layers; any region that starts in mid-air (overlaps nothing in the layer below) fails too, however close it sits to a wall.

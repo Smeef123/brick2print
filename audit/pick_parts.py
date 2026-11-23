@@ -18,7 +18,7 @@ SKIP = ('sticker', 'non-lego', 'minifig', 'string', 'rubber', 'tubes', 'cables',
 
 
 def table(name):
-    req = urllib.request.Request(BASE + name + '.csv.gz', headers={'User-Agent': 'set2print-audit'})
+    req = urllib.request.Request(BASE + name + '.csv.gz', headers={'User-Agent': 'brick2print-audit'})
     with urllib.request.urlopen(req, timeout=120) as r:
         return list(csv.DictReader(io.StringIO(gzip.decompress(r.read()).decode('utf-8'))))
 

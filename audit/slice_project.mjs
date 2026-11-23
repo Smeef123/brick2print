@@ -1,4 +1,4 @@
-// Slice every plate of a Set2Print project with the Bambu Studio CLI, `repeats` times, and report per plate the
+// Slice every plate of a Brick2Print project with the Bambu Studio CLI, `repeats` times, and report per plate the
 // median mid-air area from the G-code (audit/gcode.mjs) with its spread, print time and the slicer's warning.
 //   node audit/slice_project.mjs <project.3mf> <out dir> [repeats=3]
 // One CLI run per plate and repeat, killed after 180 s and counted as a failure: the CLI sometimes stalls at

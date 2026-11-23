@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build Set2Print's built-in set data from Rebrickable's free database downloads.
+"""Build Brick2Print's built-in set data from Rebrickable's free database downloads.
 
     python scripts/build_data.py <out_dir>
 
@@ -21,7 +21,7 @@ FILES = ['sets', 'inventories', 'inventory_parts', 'inventory_minifigs', 'parts'
 
 
 def table(name):
-    req = urllib.request.Request(BASE + name + '.csv.gz', headers={'User-Agent': 'set2print-data-build'})
+    req = urllib.request.Request(BASE + name + '.csv.gz', headers={'User-Agent': 'brick2print-data-build'})
     with urllib.request.urlopen(req, timeout=120) as r:
         data = gzip.decompress(r.read()).decode('utf-8')
     return list(csv.DictReader(io.StringIO(data)))

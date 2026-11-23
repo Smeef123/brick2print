@@ -1,4 +1,4 @@
-// The build plate view: opens on an empty P1S-sized bed, then shows each plate Set2Print lays out.
+// The build plate view: opens on an empty P1S-sized bed, then shows each plate Brick2Print lays out.
 // Bed grid, lighting and camera framing follow printfins.com's web/ui/scene.js (MIT).
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';

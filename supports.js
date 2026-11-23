@@ -1,4 +1,4 @@
-// Automatic supports for Set2Print, decided by geometry.
+// Automatic supports for Brick2Print, decided by geometry.
 //
 // The rule, in one line: a point on the underside of a part prints without support
 // if it lies on a straight path of at most BRIDGE_MM between two pieces of material
