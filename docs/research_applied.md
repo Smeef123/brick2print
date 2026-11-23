@@ -156,8 +156,23 @@ Slicing (Bambu Studio CLI, P1S profile written by the site, slicer supports off)
   open studs of 4070 and 87087 start small regions in mid-air. Fixed by moving whole wall planes (or none)
   and by keeping LDraw's open studs.
 - Support check time: 92438 (8x16 plate) took 1,340-1,354 s in `autoSupport` (not compared with d2b887c); the
-  6x8 plate 3036 0.6 s.
+  6x8 plate 3036 0.6 s. Cause (fa493b3): the replaced stud and tube files weren't marked Primitive, so three.js
+  dropped the placement of the stug-* grids that hold them; 92438's studs and tubes piled up mid-part and its
+  64 mm roof read as 6,082 mm2 unsupported, then every pillar cell scanned all 117,532 triangles. Now 2.1 s,
+  "prints as is", sliced 3x: 0 mm2. 29 of the 415 audited meshes changed with that fix.
+- Plate hollows (7926c38): walls ending on a ceiling's edge stayed at 1.6 mm when the ceiling moved to 2.2
+  (3068b's tube hole, 15535's rim); 28 of 415 meshes changed.
+- The site in headless Chrome: `node audit/test_site.mjs [local|url]` (every visitor path, downloads sliced).
+- 415-part audit rerun 2026-11-22 (`audit/run.mjs`, mid-air from audit/gcode.mjs, code at 1251c7e, before the
+  hollow fix; results in audit/out/results-midair-all.jsonl): 370 sliced, 45 not in LDraw. Zero mid-air: plain
+  studs-up 242, what the site ships (decisions.json applied) 287. Left: 25 parts the rule itself reports as
+  still unsupported (gears, propellers, technic panels); 38 the rule calls fixed or that ship plain with mid-air
+  of their own (largest 64782 470.8, 15458 235.4, 30489 176.6 mm2); 9 in the slicer's noise band (under 0.5);
+  5 that don't slice (3811 and 4186 are bigger than the bed, the site marks them too big; 2361Mx and 16965
+  "object conflicts"; 2371 ran past the audit's new 1.5 GB slicer limit, it took 8.6 GB per slicer). 8 parts
+  shipped worse than plain studs-up (50950, 4476, 61903, 15535, 30240, 47456, 47847, 3940b): all were turned or
+  pillared although studs-up sliced at 0-0.2 mm2 (61903 is the same mesh both ways: slicer noise).
+  decisions.json regenerated with audit/decisions.py: +15535 2371 30240 3940b 4476 47456 47847 50950,
+  -3829c01 3963 6126a 64448. 15535 itself was the torn hollow above and now prints as is.
 
-Not tested: a real print and fit test of any of these numbers; the site in a browser (only the modules were
-loaded and checked in Node); the 415-part audit (`audit/run.mjs`) was not rerun, and its worker still uses the
-old chord-based mid-air reading (worker.mjs has another session's uncommitted edits, so it was not touched).
+Not tested: a real print and fit test of any of these numbers.
