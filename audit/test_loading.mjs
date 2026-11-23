@@ -9,9 +9,11 @@ import './polyfill.mjs';
 import { loadPart, setLibrary } from '../parts.js';
 
 const ROOT = process.env.LDRAW_DIR || 'C:/Users/Connor/tools/ldraw';
-let fault = null;   // regex of paths answered with 503
+let fault = null;
+const gets = [];   // files downloaded (GET), to see what a load fetched   // regex of paths answered with 503
 const server = http.createServer((req, res) => {
   const rel = decodeURIComponent(new URL(req.url, 'http://x/').pathname);
+  if (req.method === 'GET') gets.push(rel);
   if (fault && fault.test(rel)) { res.writeHead(503, { Connection: 'close' }).end(); return; }
   const p = path.join(ROOT, rel);
   fs.stat(p, (e, st) => {
@@ -44,5 +46,8 @@ for (const [id, re, what] of [
 const full = await attempt('3001');
 check(tris(full.g) > 1000, `3001 loads whole: ${tris(full.g)} triangles`);
 check((await attempt('nosuchpart99')).g === null, 'a part LDraw lacks reads as not in LDraw (null)');
+// printed variants of one shape (Rebrickable 3069bpr0001, 3069bpr0002 -> LDraw 3069b) load it once
+const v1 = await attempt('3069bpr0001'), n = gets.length, v2 = await attempt('3069bpr0002');
+check(v1.g && v2.g && v1.g.mesh === v2.g.mesh && gets.length === n, `3069bpr0002 reuses 3069bpr0001's shape (${gets.length - n} files downloaded for it)`);
 console.log(fails.length ? `FAIL (${fails.length})` : 'PASS');
 process.exit(fails.length ? 1 : 0);

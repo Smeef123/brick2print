@@ -76,7 +76,7 @@ newLoader();
 const geomCache = new Map();
 
 /** Point at another copy of the LDraw library (the audit uses a local one). */
-export function setLibrary(url) { LIB = url; newLoader(); geomCache.clear(); }
+export function setLibrary(url) { LIB = url; newLoader(); geomCache.clear(); shapeCache.clear(); }
 
 // Library requests that failed for a reason other than "no such file": LDraw's loader probes several folders
 // and expects 404s, but a 5xx or a dropped connection means the part may load fine next time.
@@ -109,6 +109,16 @@ function parseAsync(text) {
   return new Promise((res, rej) => loader.parse(text, res, rej));
 }
 
+const shapeCache = new Map();   // LDraw file name -> { name, mesh } or null
+async function buildShape(name) {
+  const before = libFailures.length;
+  const group = await parseAsync(`0 Set2Print\n1 16 0 0 0 1 0 0 0 1 0 0 0 1 ${name}.dat\n`).catch((e) => { newLoader(); throw e; });
+  // three.js skips a sub-file that failed to download: the part would ship with pieces missing
+  if (libFailures.length > before) { newLoader(); throw new Error(`part of ${name} could not be downloaded (${libFailures[before]})`); }
+  const mesh = toMesh(group);
+  return mesh.tris.length ? { name, mesh } : null;   // empty: treat as not found rather than ship an empty part
+}
+
 // Modulex is another brick system that Rebrickable numbers like LEGO parts; LDraw draws it as u7xxx, so its
 // numbers name unrelated LEGO parts there (2361Mx -> 2361, a 32x32 road baseplate; 2371 -> a boat hull).
 const OTHER_SYSTEM = /^modulex\b/i;
@@ -123,13 +133,14 @@ export async function loadPart(id, name = '') {
       const r = await fetch(LIB + 'parts/' + name + '.dat', { method: 'HEAD' });   // a network error throws
       if (r.status === 404) continue;
       if (!r.ok) throw new Error(`the parts library answered ${r.status} for ${name}`);
-      const before = libFailures.length;
-      const group = await parseAsync(`0 Set2Print\n1 16 0 0 0 1 0 0 0 1 0 0 0 1 ${name}.dat\n`).catch((e) => { newLoader(); throw e; });
-      // three.js skips a sub-file that failed to download: the part would ship with pieces missing
-      if (libFailures.length > before) { newLoader(); throw new Error(`part of ${name} could not be downloaded (${libFailures[before]})`); }
-      const mesh = toMesh(group);
-      if (!mesh.tris.length) continue; // a sub-file missing from the library itself: treat as not found rather than ship an empty part
-      return { name, mesh };
+      // printed variants share one LDraw shape (3069bpr0001, 3069bpr0002 -> 3069b): build it once
+      if (!shapeCache.has(name)) {
+        const s = buildShape(name);
+        shapeCache.set(name, s);
+        s.catch(() => shapeCache.delete(name));
+      }
+      const shape = await shapeCache.get(name);
+      if (shape) return shape;   // null: a sub-file missing from the library itself, try the next candidate
     }
     return null;
   })();
