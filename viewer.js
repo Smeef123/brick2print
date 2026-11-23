@@ -58,6 +58,7 @@ function frame() {
   camera.position.set(dist * 0.15, -dist * 0.85, dist * 0.7);
   camera.near = 1; camera.far = dist * 10; camera.updateProjectionMatrix();
   controls.target.set(0, 10, 20); controls.update();
+  redraw();
 }
 
 const geoCache = new WeakMap();
@@ -74,6 +75,7 @@ function geometryOf(mesh) {
 /** Show one plate: items [{ mesh, cx, cy }] in bed coordinates (0..size), scale, colour rgb hex. */
 export function showPlate(plate) {
   parts.clear();
+  redraw();
   if (!plate) return;
   const mat = new THREE.MeshStandardMaterial({ color: new THREE.Color('#' + plate.rgb), roughness: 0.55, metalness: 0, side: THREE.DoubleSide });
   for (const it of plate.items) {
@@ -93,6 +95,14 @@ function resize() {
 new ResizeObserver(() => { resize(); }).observe(host);
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => buildBed(size));
 
-renderer.setAnimationLoop(() => { controls.update(); renderer.render(scene, camera); });
+// Drawn only when something changed (a plate, the bed, the size, the camera), not 60 times a second: without a GPU
+// (software WebGL) the constant redraw took most of the CPU the part loading and support checks need.
+let queued = false;
+function redraw() {
+  if (queued) return;
+  queued = true;
+  requestAnimationFrame(() => { queued = false; const moving = controls.update(); renderer.render(scene, camera); if (moving) redraw(); });   // damping keeps the camera gliding a few frames
+}
+controls.addEventListener('change', redraw);
 resize();
 buildBed(256);

@@ -83,7 +83,7 @@ async function slicedOk(file, proj, tag) {
   return check(res.return_code === 0 && good === proj.plates.length, `${tag}: slicer return ${res.return_code}, ${good} of ${proj.plates.length} plates sliced on their own filament`);
 }
 
-const browser = await chromium.launch({ executablePath: CHROME, headless: true });
+const browser = await chromium.launch({ executablePath: CHROME, headless: true, args: (process.env.CHROME_ARGS || '').split(' ').filter(Boolean) });   // CHROME_ARGS=--disable-gpu: like a runner without GPU
 const errors = [];
 const unstamped = new Set();   // the publish step adds ?v=<commit> to the site's own files so a visitor never mixes versions
 try {
@@ -157,6 +157,12 @@ try {
   await page.waitForTimeout(500);
   const second = await view();
   check(await page.locator('#platetabs button').nth(1).getAttribute('aria-pressed') === 'true' && differ(first, second), 'clicking the second plate tab selects it and changes the view');
+  // the view is drawn only on change (no constant redraw): dragging must still turn it
+  const cb = await page.locator('#viewport canvas').boundingBox();
+  await page.mouse.move(cb.x + cb.width / 2, cb.y + cb.height / 2); await page.mouse.down();
+  await page.mouse.move(cb.x + cb.width / 2 + 150, cb.y + cb.height / 2 + 40, { steps: 8 }); await page.mouse.up();
+  await page.waitForTimeout(800);
+  check(differ(second, await view()), 'dragging the 3D view turns it');
   const A = await download('number');
   check(A.proj.plates.length === a.plates, `project has ${A.proj.plates.length} plates, page showed ${a.plates}`);
   check(A.proj.cfg.filament_colour.length === a.colours && A.proj.plates.every((p) => p.filaments.length === 1), `one filament per colour (${A.proj.cfg.filament_colour.join(' ')}), one per plate`);
@@ -176,6 +182,19 @@ try {
   // that the library has (2026-11-23: 11374 has 5 such rows, 10696 one; with the old GitHub mirror 41 and 1)
   for (const [sn, maxMissing] of [['10696-1', 1], ['11374-1', 6]]) {   // 10696: 98560 is not in the library
     console.log(`-- set ${sn}`);
+    if (process.env.QUICK_SETS) {
+      // The publish runner has no GPU and few cores (a full build of 11374 took over 20 min there): check what the big
+      // sets add over 11926, that every row resolves to a file of the site's own library, the way the site's
+      // loader does it (parts.js resolvePart). Full builds of these sets run on the PC (QUICK_SETS unset).
+      const { resolvePart, setLibrary } = await import('../parts.js');
+      setLibrary(url + 'ldraw/');
+      const set = await fetch(`${url}data/sets/${sn.slice(0, 3)}.json`).then((x) => x.json()).then((x) => x[sn]);
+      const rows = set.p.filter((x) => !x[3]);
+      let missing = 0;
+      for (const [part, , , , name] of rows) if (!(await resolvePart(part, name)).length) missing++;
+      check(rows.length > 0 && missing <= maxMissing, `set ${sn} (parts resolved only): ${rows.length - missing} of ${rows.length} rows resolve in the site's library, ${missing} not in it (at most ${maxMissing})`);
+      continue;
+    }
     await page.fill('#setnum', sn);
     const r = await build();
     const failed = r.rows.filter((x) => /load failed|support check failed/.test(x[4])).length;

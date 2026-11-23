@@ -40,10 +40,22 @@ jobs:
           cp -r vendor bambu _site/
       # The parts library the page loads from: the official LDraw library (parts and primitives), fresh at every
       # publish, so new parts need no one to update a mirror. Served next to the page, so no CORS is needed.
+      - name: Which LDraw library release is current (its ETag)
+        id: ldraw
+        run: |
+          e=$(curl -sSfI --retry 3 https://library.ldraw.org/library/updates/complete.zip | grep -i '^etag:' | tr -dc 'A-Za-z0-9-')
+          echo "etag=${e:-day-$(date +%F)}" >> "$GITHUB_OUTPUT"
+      - name: Reuse the library unpacked by an earlier run of the same release
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/ldraw
+          key: ldraw-${{ steps.ldraw.outputs.etag }}
       - name: Add the official LDraw parts library
         run: |
-          curl -sSfL --retry 3 -o "$RUNNER_TEMP/complete.zip" https://library.ldraw.org/library/updates/complete.zip
-          unzip -q "$RUNNER_TEMP/complete.zip" 'ldraw/parts/*' 'ldraw/p/*' 'ldraw/LDConfig.ldr' -d "$RUNNER_TEMP"
+          if [ ! -f "$RUNNER_TEMP/ldraw/LDConfig.ldr" ]; then
+            curl -sSfL --retry 3 -o "$RUNNER_TEMP/complete.zip" https://library.ldraw.org/library/updates/complete.zip
+            unzip -q "$RUNNER_TEMP/complete.zip" 'ldraw/parts/*' 'ldraw/p/*' 'ldraw/LDConfig.ldr' -d "$RUNNER_TEMP"
+          fi
           mkdir -p _site/ldraw
           cp -r "$RUNNER_TEMP/ldraw/parts" "$RUNNER_TEMP/ldraw/p" "$RUNNER_TEMP/ldraw/LDConfig.ldr" _site/ldraw/
           echo "LDraw library: $(find _site/ldraw -type f | wc -l) files, $(du -sh _site/ldraw | cut -f1)"
@@ -56,6 +68,7 @@ jobs:
           LDRAW_DIR: ${{ runner.temp }}/ldraw
           SITE_DIR: _site
           CHROME: /usr/bin/google-chrome
+          QUICK_SETS: '1'   # sets 10696 and 11374: every part resolves in the library; full builds run on the PC
         run: |
           node audit/test_loading.mjs
           node audit/test_supports_big.mjs
