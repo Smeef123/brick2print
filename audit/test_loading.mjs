@@ -9,12 +9,12 @@ import './polyfill.mjs';
 import { loadPart, setLibrary } from '../parts.js';
 
 const ROOT = process.env.LDRAW_DIR || 'C:/Users/Connor/tools/ldraw';
-let fault = null;
+let fault = null, flaky = 0;   // flaky: share of requests answered 503 at random, as GitHub Pages does under a burst
 const gets = [];   // files downloaded (GET), to see what a load fetched   // regex of paths answered with 503
 const server = http.createServer((req, res) => {
   const rel = decodeURIComponent(new URL(req.url, 'http://x/').pathname);
   if (req.method === 'GET') gets.push(rel);
-  if (fault && fault.test(rel)) { res.writeHead(503, { Connection: 'close' }).end(); return; }
+  if ((fault && fault.test(rel)) || Math.random() < flaky) { res.writeHead(503, { Connection: 'close' }).end(); return; }
   const p = path.join(ROOT, rel);
   fs.stat(p, (e, st) => {
     if (e || !st.isFile()) { res.writeHead(404, { Connection: 'close' }).end(); return; }
@@ -43,6 +43,15 @@ for (const [id, re, what] of [
   const b = await attempt(id);
   check(tris(b.g) > 500, `${id}: after the fault clears it loads whole (${b.g ? tris(b.g) : b.e?.message || 'null'} triangles)`);
 }
+// GitHub Pages answers a burst of requests with some 503s (88 of them while the live site built set 11374,
+// 2026-11-23); the parts must still load whole and the same as without them
+flaky = 0.3;
+const parts = ['3062b', '4070', '3040b', '3039', '3665', '2420', '3710', '3009', '4162', '3460'];
+const flakyRes = await Promise.all(parts.map(attempt));
+flaky = 0;
+const steady = await Promise.all(parts.map(async (id) => tris((await attempt(id)).g)));
+const okCount = flakyRes.filter((r, i) => r.g && tris(r.g) === steady[i]).length;
+check(okCount === parts.length, `with 30% of answers 503: ${okCount} of ${parts.length} parts load whole (${flakyRes.filter((r) => r.e).map((r) => r.e.message.slice(0, 50)).slice(0, 2).join('; ') || 'no errors'})`);
 const full = await attempt('3001');
 check(tris(full.g) > 1000, `3001 loads whole: ${tris(full.g)} triangles`);
 check((await attempt('nosuchpart99')).g === null, 'a part LDraw lacks reads as not in LDraw (null)');

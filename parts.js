@@ -85,15 +85,24 @@ export function setLibrary(url) { LIB = url; newLoader(); geomCache.clear(); sha
 // and expects 404s, but a 5xx or a dropped connection means the part may load fine next time.
 const libFailures = [];
 const realFetch = globalThis.fetch.bind(globalThis);
+// GitHub Pages answers a burst of requests with some 503s (88 while the live site built set 11374), so a 5xx, a 429
+// or a dropped connection is tried again, up to 5 times over about 8 s, before it counts.
+const RETRIES = 5, pause = (n) => new Promise((ok) => setTimeout(ok, 250 * 2 ** n * (0.5 + Math.random())));
 globalThis.fetch = async (input, init) => {
   const url = typeof input === 'string' ? input : input?.url || String(input);
-  try {
-    const r = await realFetch(input, init);
-    if (!r.ok && r.status !== 404 && url.startsWith(LIB)) libFailures.push(`${r.status} ${url.slice(LIB.length)}`);
-    return r;
-  } catch (e) {
-    if (url.startsWith(LIB)) libFailures.push(`${e.message} ${url.slice(LIB.length)}`);
-    throw e;
+  const lib = url.startsWith(LIB) || url.startsWith(new URL(LIB, globalThis.location?.href || 'http://x/').href);
+  if (!lib) return realFetch(input, init);
+  for (let n = 0; ; n++) {
+    try {
+      const r = await realFetch(input, init);
+      if ((r.status >= 500 || r.status === 429) && n < RETRIES) { await pause(n); continue; }
+      if (!r.ok && r.status !== 404) libFailures.push(`${r.status} ${url.split('/').slice(-2).join('/')}`);
+      return r;
+    } catch (e) {
+      if (n < RETRIES) { await pause(n); continue; }
+      libFailures.push(`${e.message} ${url.split('/').slice(-2).join('/')}`);
+      throw e;
+    }
   }
 };
 

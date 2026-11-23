@@ -21,7 +21,7 @@ onmessage = async ({ data: { id, kind, part, name, mesh } }) => {
     else if (kind === 'load') { const P = await parts; r = await P.loadPart(part); P.dropMeshes(); }   // the page keeps the mesh
     else r = autoSupport(mesh);
   } catch (e) {
-    r = kind === 'load' ? { error: e.message } : { mesh, note: 'support check failed: ' + e.message, unserved: 1 };
+    r = kind === 'support' ? { mesh, note: 'support check failed: ' + e.message, unserved: 1 } : { error: e.message };   // a failed 'resolve' answered like a support result read as "files is not iterable"
   }
   postMessage({ id, r });   // copied, not transferred: a transfer list throws if both arrays ever share one buffer
 };

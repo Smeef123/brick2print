@@ -1,6 +1,6 @@
 // Check the site itself in headless Chrome, every path a visitor uses, and slice what it downloads in the
 // Bambu Studio CLI (every plate must get G-code, each on its own filament). Exits 1 on any failure.
-//   node audit/test_site.mjs [local|<url>]
+//   node audit/test_site.mjs [local|<url>] [desktop|phone]   (FLAKY=0.05: local server answers 5% of library requests 503)
 // local serves this checkout (or SITE_DIR, e.g. the publish workflow's _site) on 127.0.0.1:8768, with ldraw/ from
 // LDRAW_DIR (default C:/Users/Connor/tools/ldraw) when the site folder has none.
 // Needs `npm install` in audit/ (playwright-core) and Chrome (CHROME=path to override); the browser is headless.
@@ -38,6 +38,8 @@ if (where === 'local') {
     let p = path.join(ROOT, rel);
     // a checkout has no ldraw/ (the publish workflow adds it): serve the local library in its place
     if (rel.startsWith('/ldraw/') && !fs.existsSync(path.join(ROOT, 'ldraw'))) p = path.join(LDRAW, rel.slice(7));
+    // FLAKY=0.05: answer that share of library requests 503, as GitHub Pages does under a burst (88 times for set 11374 live)
+    if (rel.startsWith('/ldraw/') && Math.random() < +(process.env.FLAKY || 0)) { res.writeHead(503).end(); return; }
     if (p.endsWith(path.sep) || p === ROOT) p = path.join(p, 'index.html');
     if (!(p.startsWith(ROOT) || p.startsWith(path.resolve(LDRAW))) || !fs.existsSync(p) || !fs.statSync(p).isFile()) { res.writeHead(404).end(); return; }
     res.writeHead(200, { 'Content-Type': types[path.extname(p)] || 'application/octet-stream', 'Cache-Control': 'no-store' });
@@ -155,7 +157,8 @@ try {
   const ctx = await browser.newContext({ acceptDownloads: true, viewport: { width: 1400, height: 900 } });
   const page = await ctx.newPage();
   // LDraw's loader tries each folder (parts/, p/, models/, the root) and expects 404s; the browser's own favicon request is not the page's
-  const probe = (u) => /\/ldraw\/.*\.dat$/i.test(u) || /\/favicon\.ico$/.test(u);
+  // (with FLAKY the server's own 503s on the library are expected too: the page must ride them out, which the build checks prove)
+  const probe = (u) => /\/ldraw\/.*\.dat$/i.test(u) || /\/favicon\.ico$/.test(u) || (!!process.env.FLAKY && /\/ldraw\//.test(u));
   page.on('console', (m) => { if (m.type() === 'error' && !(/Failed to load resource/.test(m.text()) && probe(m.location().url))) errors.push(`console: ${m.text()} ${m.location().url || ''}`); });
   page.on('pageerror', (e) => errors.push('page: ' + e.message));
   page.on('requestfailed', (r) => errors.push(`request failed: ${r.url()} ${r.failure()?.errorText}`));
@@ -264,7 +267,7 @@ try {
     const r = await build();
     const failed = r.rows.filter((x) => /load failed|support check failed/.test(x[4])).length;
     check(/^Done/.test(r.status) && r.plates > 0 && r.tabs === r.plates && failed === 0 && r.missing <= maxMissing && r.dl,
-      `set ${sn}: ${r.plates} plates from ${r.parts} pieces in ${r.s.toFixed(0)} s, ${r.missing} rows not in the library (at most ${maxMissing}), ${failed} failed`);
+      `set ${sn}: ${r.plates} plates from ${r.parts} pieces in ${r.s.toFixed(0)} s, ${r.missing} rows not in the library (at most ${maxMissing}), ${failed} failed${failed ? ': ' + r.rows.filter((x) => /failed/.test(x[4])).slice(0, 2).map((x) => x[0] + ' ' + x[4]).join(' / ') : ''}`);
   }
 
   // 4. the same set by name

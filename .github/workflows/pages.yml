@@ -68,6 +68,7 @@ jobs:
           LDRAW_DIR: ${{ runner.temp }}/ldraw
           SITE_DIR: _site
           CHROME: /usr/bin/google-chrome
+          FLAKY: '0.05'     # the local server answers 5% of library requests 503, as GitHub Pages does under a burst
           QUICK_SETS: '1'   # sets 10696 and 11374: every part resolves in the library; full builds run on the PC
         run: |
           node audit/test_loading.mjs
