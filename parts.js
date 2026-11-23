@@ -60,6 +60,7 @@ const TUBE = own(tubeDat());
 const PRINT_PRIMITIVES = { 'stud.dat': own(studDat()), 'stud4.dat': TUBE, 'stud4a.dat': TUBE };
 const dataUrl = (text) => 'data:text/plain;charset=utf-8,' + encodeURIComponent(text);
 const loader = new LDrawLoader();
+loader.smoothNormals = false;   // only positions are used (the viewer computes its own normals); smoothing the merged studs of a 16x16 baseplate took 21 of its 23 s
 loader.manager.setURLModifier((url) => {
   const m = /\/(?:parts|p)\/(stud(?:4a?)?\.dat)$/i.exec(url);
   return m ? dataUrl(PRINT_PRIMITIVES[m[1].toLowerCase()]) : url;
