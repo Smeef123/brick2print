@@ -32,6 +32,13 @@ jobs:
         run: npm ci && (cd audit && npm ci)
       - name: Check plate layout (every part on the bed, clear of the no-print corner)
         run: node audit/test_layout.mjs
+      - name: Check downloads, limits, worker pool and stamping (no browser)
+        run: |
+          node audit/test_fetch.mjs
+          node audit/test_limits.mjs
+          node audit/test_loadfail.mjs
+          node audit/test_stamp.mjs
+          node audit/test_pool.mjs
       - name: Build set data from Rebrickable's database downloads
         run: python scripts/build_data.py _site/data
       - name: Add the site files

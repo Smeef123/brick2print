@@ -30,11 +30,16 @@ fs.rmSync(OUT, { recursive: true, force: true }); fs.mkdirSync(OUT, { recursive:
 const failures = [];
 const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if (!ok) failures.push(what); return ok; };
 
+// Failures on purpose (local server only): a fault answers matching paths with 404/503 (after `delay` ms), or never
+// ('stall'), for `left` requests and counts its hits, so a check can prove its fault was really met.
+const faults = [];
 let url = where;
 if (where === 'local') {
   const types = { '.html': 'text/html', '.js': 'text/javascript', '.json': 'application/json', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png' };
   const server = http.createServer((req, res) => {
     const rel = decodeURIComponent(new URL(req.url, 'http://x/').pathname);
+    const f = faults.find((x) => x.left > 0 && x.re.test(rel));
+    if (f) { f.left--; f.hits++; if (f.mode !== 'stall') setTimeout(() => res.writeHead(f.mode).end(), f.delay); return; }
     let p = path.join(ROOT, rel);
     // a checkout has no ldraw/ (the publish workflow adds it): serve the local library in its place
     if (rel.startsWith('/ldraw/') && !fs.existsSync(path.join(ROOT, 'ldraw'))) p = path.join(LDRAW, rel.slice(7));
@@ -90,11 +95,21 @@ const errors = [];
 // Phone (test_site.mjs <where> phone): 390 x 844, touch, mobile user agent, CPU 4x slower, as a phone would load it.
 // No sideways scrolling, every control at least 44 px to tap (links inside sentences excepted), one finger turns the
 // 3D view and two pinch it, plate tabs leave the view free, set 11926 builds and downloads (10696 too unless
-// QUICK_SETS), and a set too big for the phone's memory is refused in words.
+// QUICK_SETS); on a phone reporting 1 GB set 11926 still builds and downloads, set 10294 is refused up front in words, and a baseplate is refused by the exact check after loading.
+// The publish step adds ?v=<commit> to the site's own files so a visitor never mixes versions: on the built site
+// (SITE_DIR) or the live one, every site-relative script or data request must carry it, phone mode included.
+const STAMPED = where !== 'local' || !!process.env.SITE_DIR, unstamped = new Set();
+let stampedSeen = 0;
+const watchStamps = (pg) => pg.on('request', (r) => {
+  const u = new URL(r.url());
+  if (!r.url().startsWith(url) || !/\.(js|json)$/.test(u.pathname) || u.pathname.includes('/vendor/')) return;
+  if (u.searchParams.get('v')) stampedSeen++; else unstamped.add(u.pathname);
+});
 async function phoneChecks() {
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true, acceptDownloads: true,
     userAgent: 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36' });
   const page = await ctx.newPage(), cdp = await ctx.newCDPSession(page);
+  watchStamps(page);
   await cdp.send('Emulation.setCPUThrottlingRate', { rate: 4 });
   page.on('pageerror', (e) => errors.push('phone page: ' + e.message));
   page.on('crash', () => errors.push('phone tab crashed'));
@@ -137,21 +152,50 @@ async function phoneChecks() {
   }
   l = await layout();
   check(l.overflow <= 0 && !l.small.length, `phone, after building: no sideways scrolling (${l.overflow} px), every control 44 px (${l.small.length} smaller${l.small.length ? ': ' + l.small.slice(0, 4).join(', ') : ''})`);
-  // a phone that says it has little memory: a big set is refused in words, the tab stays alive
-  const small = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  // A phone that says how much memory it has (window.__dm GB, read on every call as navigator.deviceMemory is). Both
+  // refusals: the up-front one from the parts list, and the exact one after loading. The small set must still build.
+  const small = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, acceptDownloads: true });
   const p3 = await small.newPage();
-  await p3.addInitScript(() => Object.defineProperty(navigator, 'deviceMemory', { get: () => 0.25 }));
+  watchStamps(p3);
+  await p3.addInitScript(() => Object.defineProperty(navigator, 'deviceMemory', { get: () => window.__dm ?? 1 }));
   let crashed = false; p3.on('crash', () => { crashed = true; });
   await p3.goto(url, { waitUntil: 'load' });
   await p3.waitForFunction(() => /sets, updated/.test(document.getElementById('datainfo').textContent), null, { timeout: 60000 });
-  const bigSet = process.env.QUICK_SETS ? '11926-1' : '11374-1';   // on the runner the small set, refused all the same at 0.25 GB
-  await p3.fill('#setnum', bigSet); await p3.click('#go');
-  await p3.waitForFunction(() => !document.getElementById('go').disabled, null, { timeout: 30 * 60000, polling: 1000 }).catch(() => {});
-  const st3 = crashed ? 'tab crashed' : (await p3.textContent('#status')).trim();
-  check(/too big for this device/i.test(st3), `phone with 0.25 GB: set ${bigSet} refused in words ("${st3.slice(0, 140)}")`);
+  check(await p3.evaluate(() => navigator.deviceMemory) === 1, 'phone with 1 GB: the page sees deviceMemory 1');
+  const mb = (st) => { const m = /needs about (\d+) MB of memory and this browser gives a page about (\d+) MB/.exec(st); return m ? { need: +m[1], have: +m[2] } : { need: 0, have: -1 }; };
+  async function build3(dm, fill, press = '#go') {   // press: the one button that starts this build
+    await p3.evaluate((d) => { window.__dm = d; }, dm);
+    await fill(); await p3.click(press);
+    await p3.waitForFunction(() => !document.getElementById('go').disabled, null, { timeout: 30 * 60000, polling: 1000 }).catch(() => {});
+    const st = crashed ? 'tab crashed' : (await p3.textContent('#status')).trim();
+    const rows = await p3.$$eval('#rows tr', (trs) => trs.map((tr) => tr.textContent));
+    return { st, rows: rows.length, ready: rows.filter((t) => /ready/.test(t)).length, tabs: await p3.locator('#platetabs button').count(), anyway: await p3.isVisible('#anyway'), dl: await p3.isVisible('#dl'), ...mb(st) };
+  }
+  const bySet = (sn) => () => p3.fill('#setnum', sn);
+  const a3 = await build3(1, bySet('11926-1'));
+  const dl3 = /^Done/.test(a3.st) && await Promise.all([p3.waitForEvent('download', { timeout: 300000 }), p3.click('#dl')]).then(([d]) => d, () => null);
+  check(!!dl3 && !/too big for this device/i.test(a3.st), `phone with 1 GB: set 11926-1 builds and downloads ("${a3.st.slice(0, 160)}", ${dl3 ? dl3.suggestedFilename() : 'no download'})`);
+  const b3 = await build3(1, bySet('10294-1'));   // a big set: its row count is read from the page
+  // the up-front refusal: no plates, Build anyway offered (not pressed: the set is too big to load in a test)
+  check(/too big for this device/i.test(b3.st) && b3.need > b3.have && b3.have > 0 && b3.tabs === 0 && b3.ready === 0 && b3.anyway,
+    `phone with 1 GB: set 10294-1 (${b3.rows} rows on the page) refused before loading, in words, Build anyway offered: ${b3.need} MB > ${b3.have} MB ("${b3.st.slice(0, 120)}")`);
+  // The exact check: a 16 x 16 baseplate (3867) is one row on the list but, by guess (not measured), more mesh than a
+  // row's average. A tiny device makes the up-front refusal state the list's estimate L; with exactly L MB for the
+  // page the list passes, and only the check after loading can refuse it (plates shown: tabs > 0).
+  const c0 = await build3(0.01, async () => { await p3.click('#tab-list'); await p3.fill('#listtext', '3867,4,1'); });
+  check(c0.need > 0 && c0.ready === 0 && c0.tabs === 0 && c0.anyway, `phone: baseplate list refused up front on a tiny device, estimate ${c0.need} MB, Build anyway offered ("${c0.st.slice(0, 100)}")`);
+  // Build anyway on the up-front refusal still stops at the exact check, which refuses too on this tiny device
+  const c1 = await build3(0.01, async () => {}, '#anyway');
+  check(/too big for this device/i.test(c1.st) && c1.tabs > 0 && c1.need > c1.have && c1.anyway && !c1.dl,
+    `phone, Build anyway on the up-front refusal: loads, then the exact check refuses (${c1.tabs} plate tabs, ${c1.need} MB > ${c1.have} MB, "${c1.st.slice(0, 100)}")`);
+  const c3 = await build3(c0.need / 512, async () => {});
+  check(/too big for this device/i.test(c3.st) && c3.have === c0.need && c3.need > c3.have && c3.tabs > 0 && c3.anyway && !c3.dl,
+    `phone with ${c0.need} MB for the page: baseplate refused after loading by the exact check, ${c3.need} MB > ${c3.have} MB, ${c3.tabs} plate tabs ("${c3.st.slice(0, 120)}")`);
+  // Build anyway on the exact refusal writes the project
+  const c4 = await build3(c0.need / 512, async () => {}, '#anyway');
+  check(/^Done/.test(c4.st) && c4.dl && c4.tabs > 0, `phone, Build anyway on the exact refusal: "${c4.st.slice(0, 100)}", download ${c4.dl ? 'shown' : 'missing'}`);
   await small.close(); await ctx.close();
 }
-const unstamped = new Set();   // the publish step adds ?v=<commit> to the site's own files so a visitor never mixes versions
 try {
   if (MODE === 'phone') await phoneChecks(); else {
   const ctx = await browser.newContext({ acceptDownloads: true, viewport: { width: 1400, height: 900 } });
@@ -162,7 +206,7 @@ try {
   page.on('console', (m) => { if (m.type() === 'error' && !(/Failed to load resource/.test(m.text()) && probe(m.location().url))) errors.push(`console: ${m.text()} ${m.location().url || ''}`); });
   page.on('pageerror', (e) => errors.push('page: ' + e.message));
   page.on('requestfailed', (r) => errors.push(`request failed: ${r.url()} ${r.failure()?.errorText}`));
-  page.on('request', (r) => { const u = new URL(r.url()); if (where !== 'local' && r.url().startsWith(url) && /\.(js|json)$/.test(u.pathname) && !u.pathname.includes('/vendor/') && !u.searchParams.get('v')) unstamped.add(u.pathname); });
+  watchStamps(page);
   page.on('response', (r) => { if (r.status() >= 400 && !probe(r.url())) errors.push(`HTTP ${r.status()}: ${r.url()}`); });
   const text = (sel) => page.textContent(sel).then((t) => t.trim());
   const view = () => page.locator('#viewport canvas').screenshot();
@@ -190,6 +234,7 @@ try {
 
   // 1. page load
   await page.goto(url, { waitUntil: 'load' });
+  const loadedAt = Date.now();
   const info = await page.waitForFunction(() => /sets, updated/.test(document.getElementById('datainfo').textContent), null, { timeout: 30000 }).then(() => true, () => false);
   check(info, 'page loads with the set list (' + (await text('#datainfo')) + ')');
   const box = await page.locator('#viewport canvas').boundingBox();
@@ -200,6 +245,8 @@ try {
 
   // the page's longest main-thread block: while one runs, the page can't scroll, click or redraw
   await page.evaluate(() => { window.__longest = 0; new PerformanceObserver((l) => { for (const e of l.getEntries()) window.__longest = Math.max(window.__longest, e.duration); }).observe({ type: 'longtask' }); });
+  // without long-task reports both freeze checks below would read 0 and pass
+  check(await page.evaluate(() => PerformanceObserver.supportedEntryTypes.includes('longtask')), 'the browser reports long tasks (needed by the freeze checks)');
 
   // 2. suggestions while typing
   await page.fill('#setnum', 'wooden minif');
@@ -248,7 +295,16 @@ try {
 
   // 3c. the set-number path on real sets of other sizes: plates, nothing failed to load, nothing reported missing
   // that the library has (2026-11-23: 11374 has 5 such rows, 10696 one; with the old GitHub mirror 41 and 1)
-  for (const [sn, maxMissing] of [['10696-1', 1], ['11374-1', 6]]) {   // 10696: 98560 is not in the library
+  // Parts expected not to be in the library, by part number (2026-11-23: 10696 lacks 98560; 11374 lacks 4 parts in 5 rows,
+  // checked absent from the LDraw library 2026-11-23)
+  // EXPECT_BROKEN: rows reading "not printable" (the part's file is there, a piece it uses is not); none recorded.
+  const EXPECT_MISSING = { '10696-1': ['98560'], '11374-1': ['10118867', '114913c01', '2752', '65151c02'] }, EXPECT_BROKEN = { '10696-1': [], '11374-1': [] };
+  const namedOk = (list, label, sn, found, how) => {
+    const f = [...new Set(found)].sort().join(' '), want = [...list[sn]].sort().join(' ');
+    return check(f === want, `set ${sn}${how}: ${label} ${f || 'none'}, expected ${want || 'none'}${f !== want && !want ? ' (list not filled in yet: fill it from this first run)' : ''}`);
+  };
+  const missingOk = (sn, found, how) => namedOk(EXPECT_MISSING, 'not in the library', sn, found, how);
+  for (const sn of ['10696-1', '11374-1']) {
     console.log(`-- set ${sn}`);
     if (process.env.QUICK_SETS) {
       // The publish runner has no GPU and few cores (a full build of 11374 took over 20 min there): check what the big
@@ -258,16 +314,22 @@ try {
       setLibrary(url + 'ldraw/');
       const set = await fetch(`${url}data/sets/${sn.slice(0, 3)}.json`).then((x) => x.json()).then((x) => x[sn]);
       const rows = set.p.filter((x) => !x[3]);
-      let missing = 0;
-      for (const [part, , , , name] of rows) if (!(await resolvePart(part, name)).length) missing++;
-      check(rows.length > 0 && missing <= maxMissing, `set ${sn} (parts resolved only): ${rows.length - missing} of ${rows.length} rows resolve in the site's library, ${missing} not in it (at most ${maxMissing})`);
+      const missing = [];
+      for (const [part, , , , name] of rows) if (!(await resolvePart(part, name)).length) missing.push(part);
+      check(rows.length > 0, `set ${sn}: ${rows.length} rows to resolve`);
+      missingOk(sn, missing, ' (top file of each part resolved only)');
       continue;
     }
     await page.fill('#setnum', sn);
     const r = await build();
     const failed = r.rows.filter((x) => /load failed|support check failed/.test(x[4])).length;
-    check(/^Done/.test(r.status) && r.plates > 0 && r.tabs === r.plates && failed === 0 && r.missing <= maxMissing && r.dl,
-      `set ${sn}: ${r.plates} plates from ${r.parts} pieces in ${r.s.toFixed(0)} s, ${r.missing} rows not in the library (at most ${maxMissing}), ${failed} failed${failed ? ': ' + r.rows.filter((x) => /failed/.test(x[4])).slice(0, 2).map((x) => x[0] + ' ' + x[4]).join(' / ') : ''}`);
+    const gone = r.rows.filter((x) => /not in LDraw/.test(x[4])).map((x) => x[0]), broken = r.rows.filter((x) => /not printable/.test(x[4])).map((x) => x[0]);
+    missingOk(sn, gone, '');
+    namedOk(EXPECT_BROKEN, 'not printable (a piece missing from the library)', sn, broken, '');
+    // the status counts each kind on its own; the "not found" tile (s-missing) holds both (app.js, 2026-11-23)
+    const said = (re) => +(re.exec(r.status)?.[1] || 0), goneSaid = said(/(\d+) part\(s\) not in the library/), brokenSaid = said(/(\d+) part\(s\) not printable/);
+    check(/^Done/.test(r.status) && r.plates > 0 && r.tabs === r.plates && failed === 0 && goneSaid === gone.length && brokenSaid === broken.length && r.missing === gone.length + broken.length && r.dl,
+      `set ${sn}: ${r.plates} plates from ${r.parts} pieces in ${r.s.toFixed(0)} s, status says ${goneSaid} not in the library (${gone.length} rows) and ${brokenSaid} not printable (${broken.length} rows), "not found" tile ${r.missing}, ${failed} failed${failed ? ': ' + r.rows.filter((x) => /failed/.test(x[4])).slice(0, 2).map((x) => x[0] + ' ' + x[4]).join(' / ') : ''}`);
   }
 
   // 4. the same set by name
@@ -376,6 +438,143 @@ try {
   check(/^Done/.test(w2.status) && w2.rows.length === 2 && !w2.rows.some((r) => /failed/.test(r[4])), `next build after the broken worker gets working ones (${w2.rows.map((r) => r[4]).join(' | ') || w2.status})`);
   await p2.close();
 
+  // 10. failures on purpose: each check also proves its fault was met (hits), or it would pass on a healthy server.
+  // Not here (covered without a browser): retries after a refusal spread out (test_fetch.mjs 1b).
+  // the page's own load-failure timer, read from index.html: wait past it, then the message must still be hidden
+  const failMs = +(/setTimeout\(fail, (\d+)\)/.exec(fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8'))?.[1] || 0);
+  await page.waitForTimeout(Math.max(0, failMs + 1000 - (Date.now() - loadedAt)));
+  check(failMs > 0 && Date.now() - loadedAt > failMs && await page.isHidden('#loadfail'), `normal load: no load-failure message ${Math.round((Date.now() - loadedAt) / 1000)} s after loading (its timer: ${failMs / 1000 || 'not found'} s)`);
+  for (const how of ['blocked', 'stalled']) {
+    const pg = await ctx.newPage();
+    let met = 0;
+    await pg.route('**/three.module.js', (route) => { met++; if (how === 'blocked') route.abort(); });   // stalled: never answered
+    await pg.goto(url, { waitUntil: 'commit' });
+    const shown = await pg.waitForSelector('#loadfail:not([hidden])', { timeout: failMs + 20000 }).then(() => true, () => false);
+    check(met > 0 && shown, `three.module.js ${how} (${met} requests): the load-failure message shows`);
+    await pg.close();
+  }
+  // a worker's three.js download fails once: the download retry absorbs it (the broken-worker path is tested below),
+  // and the build still gives every part, none failed, no empty shape
+  {
+    let met = 0;
+    const once3 = (route) => { if (met++ === 0) route.abort(); else route.continue(); };
+    await ctx.route('**/three@*/+esm', once3);
+    const pg = await ctx.newPage();
+    await pg.goto(url, { waitUntil: 'load' });
+    await pg.click('#tab-list'); await pg.fill('#listtext', '3001,4,1\n3003,4,1'); await pg.uncheck('#fins');
+    const r = await build(pg, 180000).catch(unfinished);
+    await ctx.unroute('**/three@*/+esm', once3);
+    let empty = -1;
+    if (r.dl) {
+      const [d] = await Promise.all([pg.waitForEvent('download', { timeout: 60000 }), pg.click('#dl')]);
+      const model = await (await JSZip.loadAsync(fs.readFileSync(await d.path()))).file('3D/3dmodel.model').async('string');
+      const objs = model.split('<object ').slice(1).filter((o) => o.includes('<mesh>'));
+      empty = objs.length ? objs.filter((o) => !o.includes('<triangle ')).length : -1;
+    }
+    check(met > 0 && /^Done/.test(r.status) && r.rows.length === 2 && !r.rows.some((x) => /failed/.test(x[4])) && empty === 0,
+      `three.js blocked once for a worker (${met} requests): build "${r.status.slice(0, 60)}", rows ${r.rows.map((x) => x[4]).join(' | ')}, ${empty < 0 ? 'no shapes written' : empty + ' empty shapes'}`);
+    await pg.close();
+  }
+  if (where !== 'local') console.log('skip server faults: they need the local server');
+  else {
+    const fault = (re, mode, left = Infinity, delay = 0) => { const f = { re, mode, left, delay, hits: 0 }; faults.push(f); return f; };
+    const clear = (f) => faults.splice(faults.indexOf(f), 1);
+    // oneWorker: the page sees 2 cores, so it starts one worker and every part shares its loader
+    const fresh = async (list, fins, oneWorker = false) => {
+      const pg = await ctx.newPage();
+      if (oneWorker) await pg.addInitScript(() => Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 2 }));
+      await pg.goto(url, { waitUntil: 'load' });
+      await pg.waitForFunction(() => document.documentElement.dataset.ready === '1', null, { timeout: 60000 });
+      await pg.click('#tab-list'); await pg.fill('#listtext', list);
+      if (fins) await pg.check('#fins'); else await pg.uncheck('#fins');
+      return pg;
+    };
+    const rowsSay = (r) => r.rows.map((x) => x[0] + ' ' + x[4]).join(' | ') || r.status;
+
+    console.log('-- parts.js answers 503 three times');
+    let f = fault(/^\/parts\.js$/, 503, 3);
+    let pg = await fresh('3001,4,1', false);
+    let r = await build(pg, 180000).catch(unfinished);
+    clear(f);
+    check(f.hits === 3 && /^Done/.test(r.status) && r.rows.length === 1 && !r.rows.some((x) => /failed/.test(x[4])), `parts.js 503 x${f.hits} then OK: still builds (${rowsSay(r)})`);
+    await pg.close();
+
+    // the same text is looked for both ways, so a reworded note fails "down" instead of passing "back"
+    console.log('-- decisions.json down, then back');
+    const NOTE = 'The list of parts checked in Bambu Studio could not be loaded';
+    const notes = (st) => st.split(NOTE).length - 1;
+    f = fault(/^\/bambu\/decisions\.json$/, 404);
+    pg = await fresh('2852,4,1', true);   // 2852 is in decisions.json: prints plain
+    r = await build(pg, 180000).catch(unfinished);
+    clear(f);
+    check(f.hits > 0 && /^Done/.test(r.status) && notes(r.status) === 1 && !/checked in Bambu Studio/.test(r.rows[0]?.[4] || ''), `decisions.json down (${f.hits} requests): the note shows ${notes(r.status)} time(s), 2852 not from the list (${rowsSay(r)})`);
+    r = await build(pg, 180000).catch(unfinished);
+    check(/^Done/.test(r.status) && notes(r.status) === 0 && /checked in Bambu Studio/.test(r.rows[0]?.[4] || ''), `decisions.json back: next build uses the list, note shown ${notes(r.status)} time(s) (${rowsSay(r)})`);
+    // the GPU context lost and restored: the view is drawn again as it was
+    const v0 = await pg.locator('#viewport canvas').screenshot();
+    const lostOk = await pg.evaluate(async () => {
+      const c = document.querySelector('#viewport canvas'), gl = c.getContext('webgl2') || c.getContext('webgl'), ext = gl?.getExtension('WEBGL_lose_context');
+      if (!ext) return false;
+      ext.loseContext(); await new Promise((ok) => setTimeout(ok, 300));
+      const was = gl.isContextLost();
+      ext.restoreContext(); await new Promise((ok) => setTimeout(ok, 1500));
+      return was && !gl.isContextLost();
+    });
+    check(lostOk && !differ(v0, await pg.locator('#viewport canvas').screenshot()), `GPU context lost and restored (${lostOk ? 'happened' : 'not emulated'}): the view is drawn as before`);
+    await pg.close();
+
+    // one worker, so both parts share one loader; 3001's sub-file answers 404 late (1.5 s). Both orders: with 3001
+    // first, 3003 can finish before the 404 lands; with 3003 first, 3001's failure lands while 3003 is still loading.
+    for (const list of ['3001,4,1\n3003,4,1', '3003,4,1\n3001,4,1']) {
+      const order = list.split('\n').map((x) => x.split(',')[0]).join(' then ');
+      console.log(`-- two parts in one worker (${order}), 3001 with a sub-file missing`);
+      f = fault(/\/3001s01\.dat$/i, 404, Infinity, 1500);
+      pg = await fresh(list, false, true);
+      const workers = [];
+      pg.on('worker', (w) => workers.push(w));
+      r = await build(pg, 180000).catch(unfinished);
+      clear(f);
+      const say = (id) => r.rows.find((x) => x[0] === id)?.[4] || '';
+      check(f.hits > 0 && workers.length === 1 && /^Done/.test(r.status) && /not printable/.test(say('3001')) && !/not printable|failed|not in LDraw/.test(say('3003')),
+        `sub-file of 3001 missing, ${order} (${f.hits} requests, ${workers.length} worker): only 3001 reads "not printable" (${rowsSay(r)})`);
+      await pg.close();
+    }
+
+    // A worker goes away while it still has jobs: two workers (the page sees 3 cores, 8 GB); the second worker's
+    // parts.js downloads fine but its import throws, so that worker reports itself broken and the page drops it while
+    // support checks run on the other. The build must finish, the button come back, and no row stay waiting/loading.
+    // (Placeholder for the page fixer's way to fail a worker's import after its download; swap it in here.)
+    console.log('-- a worker goes away with jobs waiting');
+    {
+      let served = 0, bad = 0;
+      const pg = await ctx.newPage();
+      await pg.addInitScript(() => { Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 3 }); Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 }); });
+      await pg.route('**/parts.js*', async (route) => {
+        if (served++ !== 1) return route.continue();
+        bad++;
+        route.fulfill({ contentType: 'text/javascript', headers: { 'Cache-Control': 'no-store' }, body: 'throw new Error("test: import fails after download");' });
+      });
+      const workers = [];
+      pg.on('worker', (w) => workers.push(w));
+      await pg.goto(url, { waitUntil: 'load' });
+      await pg.click('#tab-list'); await pg.fill('#listtext', '3040,4,1\n3665,4,1\n4286,4,1\n3001,4,1\n3003,4,1\n3020,4,1'); await pg.check('#fins');
+      const r = await build(pg, 300000).catch(unfinished);
+      const enabled = await pg.isEnabled('#go');
+      const stuck = r.rows.filter((x) => /^(waiting|loading)$/.test(x[4])).length;
+      check(bad === 1 && workers.length >= 2 && /^Done/.test(r.status) && enabled && r.rows.length === 6 && stuck === 0,
+        `worker gone with jobs waiting (${workers.length} workers, ${bad} broken import): build "${r.status.slice(0, 60)}", button ${enabled ? 'enabled' : 'disabled'}, ${stuck} rows stuck (${r.rows.map((x) => x[0] + ' ' + x[4]).join(' | ')})`);
+      await pg.close();
+    }
+
+    console.log('-- library refuses a burst');
+    f = fault(/^\/ldraw\//, 503, 12);
+    pg = await fresh('3004,4,1\n3005,4,1\n3010,4,1\n3622,4,1', false);
+    r = await build(pg, 300000).catch(unfinished);
+    clear(f);
+    check(f.hits === 12 && /^Done/.test(r.status) && !r.rows.some((x) => /failed/.test(x[4])), `library 503 x${f.hits}: still builds (${rowsSay(r)})`);
+    await pg.close();
+  }
+
   // phone width: no sideways scrolling
   await page.setViewportSize({ width: 390, height: 844 });
   await page.waitForTimeout(300);
@@ -385,7 +584,8 @@ try {
 } catch (e) {
   check(false, 'test stopped: ' + e.message.split('\n')[0]);
 } finally { await browser.close(); }
-if (where !== 'local') check(!unstamped.size, unstamped.size ? 'unstamped site files: ' + [...unstamped].join(' ') : 'every site script and data file carries its version stamp');
+if (STAMPED) check(!unstamped.size && stampedSeen > 0, unstamped.size ? 'unstamped site files: ' + [...unstamped].join(' ') : `every site script and data file carries its version stamp (${stampedSeen} stamped requests)`);
+else console.log('skip version stamps: a plain checkout is not stamped (set SITE_DIR to the built site)');
 check(!errors.length, errors.length ? `${errors.length} browser errors:\n  ` + errors.join('\n  ') : 'no browser errors');
 console.log(failures.length ? `FAIL (${failures.length})` : 'PASS');
 process.exit(failures.length ? 1 : 0);
