@@ -1,6 +1,7 @@
 // LDraw part -> studs-up triangle mesh in millimetres. Shared by the site (app.js) and the audit (audit/).
 import * as THREE from 'three';
 import { LDrawLoader } from 'three/addons/loaders/LDrawLoader.js';
+import { fetchRetry } from './net.js';
 
 // The site's own copy of the official LDraw library (parts/ and p/ from library.ldraw.org's complete.zip), put next
 // to the page by the publish workflow every week, so new parts arrive without anyone updating a mirror. (The
@@ -85,24 +86,22 @@ export function setLibrary(url) { LIB = url; newLoader(); geomCache.clear(); sha
 // and expects 404s, but a 5xx or a dropped connection means the part may load fine next time.
 const libFailures = [];
 const realFetch = globalThis.fetch.bind(globalThis);
-// GitHub Pages answers a burst of requests with some 503s (88 while the live site built set 11374), so a 5xx, a 429
-// or a dropped connection is tried again, up to 5 times over about 8 s, before it counts.
-const RETRIES = 5, pause = (n) => new Promise((ok) => setTimeout(ok, 250 * 2 ** n * (0.5 + Math.random())));
+// The library's host refuses bursts (GitHub Pages: 88 answers 503 while the live site built set 11374): every
+// library request, three.js's own included, goes through net.js's fetchRetry, which shares one pause among all of
+// this worker's requests and honours Retry-After. What still fails counts as a failure of the load in progress.
+fetchRetry.realFetch = realFetch;
 globalThis.fetch = async (input, init) => {
   const url = typeof input === 'string' ? input : input?.url || String(input);
   const lib = url.startsWith(LIB) || url.startsWith(new URL(LIB, globalThis.location?.href || 'http://x/').href);
   if (!lib) return realFetch(input, init);
-  for (let n = 0; ; n++) {
-    try {
-      const r = await realFetch(input, init);
-      if ((r.status >= 500 || r.status === 429) && n < RETRIES) { await pause(n); continue; }
-      if (!r.ok && r.status !== 404) libFailures.push(`${r.status} ${url.split('/').slice(-2).join('/')}`);
-      return r;
-    } catch (e) {
-      if (n < RETRIES) { await pause(n); continue; }
-      libFailures.push(`${e.message} ${url.split('/').slice(-2).join('/')}`);
-      throw e;
-    }
+  const what = url.split('/').slice(-2).join('/');
+  try {
+    const r = await fetchRetry(input, init);
+    if (!r.ok && r.status !== 404) libFailures.push(`${r.status} ${what}`);
+    return r;
+  } catch (e) {
+    libFailures.push(`${e.message} ${what}`);
+    throw e;
   }
 };
 
@@ -122,11 +121,38 @@ function parseAsync(text) {
 }
 
 const shapeCache = new Map();   // LDraw file name -> { name, mesh } or null
-async function buildShape(name) {
+// One build at a time per page or worker: three.js reports a missing sub-file only as a console warning, and the
+// library's failed downloads land in one list, so with two builds in flight one could take the other's failure or
+// miss its own (the checker's case: A restores console.warn while B's warning is still coming). Parts still load in
+// parallel across workers; the colour table is loaded inside the same turn.
+let turn = Promise.resolve();
+function buildShape(name) {
+  const mine = turn.then(() => buildShapeAlone(name));
+  turn = mine.catch(() => {});
+  return mine;
+}
+async function buildShapeAlone(name) {
+  if (!materialsReady) materialsReady = loader.preloadMaterials(LIB + 'LDConfig.ldr').then(() => true, () => { materialsReady = null; });
+  await materialsReady;   // the colour table only names colours: a part loads without it, and a failure is tried again next time
   const before = libFailures.length;
-  const group = await parseAsync(`0 Brick2Print\n1 16 0 0 0 1 0 0 0 1 0 0 0 1 ${name}.dat\n`).catch((e) => { newLoader(); throw e; });
-  // three.js skips a sub-file that failed to download: the part would ship with pieces missing
+  // three.js reports a sub-file it found nowhere in the library by rejecting (a primitive) or by a console warning
+  // and skipping it (a sub-part); either way the part would be incomplete
+  const missing = [], warn = console.warn;
+  const note = (e) => { const m = /Subobject "([^"]+)" could not be loaded/.exec(e?.message || String(e)); if (m) missing.push(m[1]); };
+  console.warn = (...a) => { a.forEach(note); warn.apply(console, a); };
+  let group;
+  try {
+    group = await parseAsync(`0 Brick2Print\n1 16 0 0 0 1 0 0 0 1 0 0 0 1 ${name}.dat\n`).catch((e) => { note(e); newLoader(); if (!missing.length || libFailures.length > before) throw e; return null; });
+  } finally { console.warn = warn; }
+  // a download that failed (the host refused, the connection dropped): the next build tries again
   if (libFailures.length > before) { newLoader(); throw new Error(`part of ${name} could not be downloaded (${libFailures[before]})`); }
+  // a file the library itself lacks: not a download problem, and the part must not ship with that piece missing
+  if (missing.length) {
+    newLoader();   // three.js keeps the miss cached; a fresh loader asks again for the next part
+    const e = new Error(`${name} is missing from the LDraw library in part (${[...new Set(missing)].join(', ')}), so it can't be printed whole`);
+    e.missingFiles = [...new Set(missing)];
+    throw e;
+  }
   const mesh = toMesh(group);
   return mesh.tris.length ? { name, mesh } : null;   // empty: treat as not found rather than ship an empty part
 }
@@ -140,7 +166,7 @@ export async function resolvePart(id, name = '') {
   if (OTHER_SYSTEM.test(name)) return [];
   const found = [];
   for (const n of candidates(id)) {
-    const r = await fetch(LIB + 'parts/' + n + '.dat', { method: 'HEAD' });   // a network error throws
+    const r = await fetchRetry(LIB + 'parts/' + n + '.dat', { method: 'HEAD' });   // not the global wrapper: its failures belong to the build in progress, not to this lookup
     if (r.status === 404) continue;
     if (!r.ok) throw new Error(`the parts library answered ${r.status} for ${n}`);
     found.push(n);
@@ -154,8 +180,6 @@ export async function loadPart(id, name = '') {
   if (OTHER_SYSTEM.test(name)) return null;
   if (geomCache.has(id)) return geomCache.get(id);
   const p = (async () => {
-    if (!materialsReady) materialsReady = loader.preloadMaterials(LIB + 'LDConfig.ldr').catch(() => {});
-    await materialsReady;
     for (const name of await resolvePart(id)) {
       // printed variants share one LDraw shape (3069bpr0001, 3069bpr0002 -> 3069b): build it once
       if (!shapeCache.has(name)) {

@@ -3,6 +3,9 @@ import { COLORS } from './colors.js';
 import { multiFilamentSettings, projectFile } from './export3mf.js';
 import { buildBed, showPlate } from './viewer.js';
 import { pack } from './layout.js';
+import { getJSON, once, setDeadline, tabId } from './net.js';
+import { memoryForPageMB, workerCount, projectNeedMB, listNeedMB } from './limits.js';
+import { createPool } from './pool.js';
 
 const $ = (id) => document.getElementById(id);
 // a number input's value held to its min and max (shown back in the box); unreadable -> its default
@@ -34,8 +37,7 @@ function colourOf(c) {
 
 // ---------- inputs ----------
 // Built-in set data (data/, rebuilt weekly from Rebrickable's free database downloads).
-let indexP = null;
-const loadIndex = () => (indexP ??= fetch('data/index.json').then((r) => { if (!r.ok) throw new Error('index'); return r.json(); }));
+const loadIndex = once(() => getJSON('data/index.json'));
 const bucket = (sn) => sn.toLowerCase().slice(0, 3).replace(/[^a-z0-9]/g, '') || '_';
 
 // "6000", "6000-1", "75192" or a name like "millennium falcon" -> the set's number
@@ -53,9 +55,8 @@ async function resolveSet(query) {
 
 async function fromBuiltIn(query, withSpares) {
   const sn = await resolveSet(query);
-  const r = await fetch(`data/sets/${bucket(sn)}.json`);
-  if (!r.ok) throw new Error('The set data could not be loaded. Try again in a minute.');
-  const set = (await r.json())[sn];
+  const shard = await getJSON(`data/sets/${bucket(sn)}.json`).catch(() => { throw new Error('The set data could not be loaded. Check your connection and try again.'); });
+  const set = shard[sn];
   if (!set) throw new Error(`Set ${sn} has no parts list yet.`);
   const lines = set.p.filter((row) => withSpares || !row[3]).map(([part, col, qty, , name]) => ({ part, ldraw: part, name, colour: colourOf(String(col)), qty }));
   return { title: `${sn} ${set.n} (${set.y})`, lines };
@@ -114,88 +115,56 @@ function fromText(text, withSpares) {
 const supportCache = new Map();
 // Parts the audit sliced in Bambu Studio where automatic supports came out worse than plain
 // studs-up (audit/decisions.py): those print plain. Unaudited parts use the geometry rules.
-let verifiedP = null;
-const verified = () => (verifiedP ??= fetch('bambu/decisions.json').then((r) => (r.ok ? r.json() : {})).catch(() => ({})));
-// Memory a phone can give the page: about half of navigator.deviceMemory (Chrome reports it, capped at 8 GB;
-// other browsers don't, and then nothing is refused). Guess, not measured on a phone.
-const memoryForPageMB = () => (navigator.deviceMemory ? Math.round(navigator.deviceMemory * 1024 / 2) : Infinity);
-// The page and its workers (about 250 MB in headless Chrome) plus about 10 bytes per byte of mesh for every object
-// (shape x colour) the project writes: set 11374's 475 objects made the writer's peak 127 MB in Node.
-function projectNeedMB(plates) {
-  const seen = new Set();
-  let bytes = 0;
-  for (const pl of plates) for (const it of pl.items) {
-    const k = it.key + '|' + pl.filament;
-    if (!seen.has(k)) { seen.add(k); bytes += it.mesh.verts.byteLength + it.mesh.tris.byteLength; }
-  }
-  return Math.round(250 + (bytes * 10) / 1048576);
-}
-
+// Loaded once per build (not per part: under a refusing host each part would wait again). If it can't be loaded,
+// that build gives every part automatic supports and says so; nothing is remembered, the next build tries again.
+const loadDecisions = once(() => getJSON('bambu/decisions.json'));
 // Loading a part and its support check run in worker threads (site_worker.js): a baseplate takes seconds to
 // load and a big part seconds to minutes to check, which would freeze the page.
-const pool = [], waiting = new Map();
-let jobId = 0;
-function inWorker(kind, data) {
-  if (!pool.length) {
-    // one core left for the page; fewer workers when the device has little memory (each holds three.js and a parts loader)
-    const mem = navigator.deviceMemory || 8, n = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 2) - 1, mem <= 2 ? 1 : mem <= 4 ? 2 : 4));
-    for (let k = 0; k < n; k++) {
-      const w = new Worker('site_worker.js', { type: 'module', name: document.querySelector('script[type="importmap"]').textContent });   // the worker reads three.js's URLs from it
-      w.busy = 0;
-      w.onmessage = ({ data }) => { w.busy--; waiting.get(data.id).res(data.r); waiting.delete(data.id); };
-      // a worker that failed to load or crashed leaves the pool (the next job makes a new pool if none is left)
-      w.onerror = (e) => {
-        e.preventDefault(); w.terminate(); if (pool.includes(w)) pool.splice(pool.indexOf(w), 1);
-        const why = e.message || 'worker error';
-        for (const [id, j] of waiting) if (j.w === w) { j.res(j.kind !== 'support' ? { error: why } : { mesh: j.data.mesh, note: 'support check failed: ' + why, unserved: 1 }); waiting.delete(id); }
-      };
-      pool.push(w);
-    }
-  }
-  const w = pool.reduce((a, b) => (b.busy < a.busy ? b : a));
-  w.busy++;
-  return new Promise((res) => {
-    const id = ++jobId;
-    waiting.set(id, { res, w, kind, data });
-    w.postMessage({ id, kind, ...data });   // copied, not moved: a loaded mesh stays cached here
-  });
-}
+// One core left for the page; fewer workers when the device has little memory (each holds three.js and a parts
+// loader). pool.js settles every job a worker held whenever it goes away, whatever the route (audit/test_pool.mjs).
+const pool = createPool(() => new Worker('site_worker.js', { type: 'module', name: JSON.stringify({ imports: JSON.parse(document.querySelector('script[type="importmap"]').textContent).imports, tab: tabId }) }), workerCount(navigator));   // three.js's URLs, and this tab's id for its build deadline (net.js)
 // a part's mesh (null: not in LDraw); throws if it could not be loaded at all
 const partCache = new Map();
 // Each id is resolved to its LDraw file names first, so printed variants of one shape (3069bpr0001, 3069bpr0002 ->
 // 3069b) load once; the meshes live only here, the workers drop theirs after each load.
 const shapeCache = new Map();
-const job = (kind, data) => inWorker(kind, data).then((r) => { if (r?.error) throw new Error(r.error); return r; });
-function loadShape(file) {
-  if (!shapeCache.has(file)) shapeCache.set(file, job('load', { part: file }).catch((e) => { shapeCache.delete(file); throw e; }));
+// Every job goes this way: an error answer is thrown, never taken for a result (pool.js has already re-sent a job
+// whose worker went away).
+// run: pool.run, or a build's session run so its deadline can give its jobs up without touching anyone else's.
+const job = (kind, data, run = pool.run) => run(kind, data).then((r) => { if (r?.error) throw Object.assign(new Error(r.error), { missingFiles: r.missingFiles }); return r; });
+function loadShape(file, run) {
+  if (!shapeCache.has(file)) shapeCache.set(file, job('load', { part: file }, run).catch((e) => { shapeCache.delete(file); throw e; }));
   return shapeCache.get(file);
 }
-function loadPart(id, name = '') {
+function loadPart(id, name = '', run) {
   if (!partCache.has(id)) {
-    partCache.set(id, job('resolve', { part: id, name }).then(async (files) => {
-      for (const f of files) { const g = await loadShape(f); if (g) return g; }   // null: that file has no faces, try the next
+    partCache.set(id, job('resolve', { part: id, name }, run).then(async (files) => {
+      for (const f of files) { const g = await loadShape(f, run); if (g) return g; }   // null: that file has no faces, try the next
       return null;
     }).catch((e) => { partCache.delete(id); throw e; }));
   }
   return partCache.get(id);
 }
-function supported(g) {
+function supported(g, v, run) {   // v: this build's decisions list, or null when it couldn't be loaded
   if (!supportCache.has(g.name)) {
-    supportCache.set(g.name, verified().then(async (v) => {
-      const s = v[g.name] === 'plain' ? { mesh: g.mesh, note: 'prints as is (checked in Bambu Studio)', before: 0, after: 0, unserved: 0 } : await inWorker('support', { mesh: g.mesh });
+    supportCache.set(g.name, (async () => {
+      const s = v?.[g.name] === 'plain' ? { mesh: g.mesh, note: 'prints as is (checked in Bambu Studio)', before: 0, after: 0, unserved: 0 } : await job('support', { mesh: g.mesh }, run).then((r) => (r?.mesh ? r : Promise.reject(new Error('no shape came back'))))
+        .catch((e) => ({ mesh: g.mesh, note: 'support check failed: ' + e.message, unserved: 1 }));   // fails in words, with the part's own shape
+      // decided without the checked list, or the check failed (here, in the worker or in the pool: all say it this
+      // way): decide again next build, never remember a failure as the answer
+      if (!v || s.note?.startsWith('support check failed')) supportCache.delete(g.name);
       return { name: g.name, mesh: s.mesh, support: s };
-    }));
+    })());
   }
   return supportCache.get(g.name);
 }
 
 // ---------- writers (export3mf.js) ----------
-let baseCfgP = null, filKeysP = null;
 // One Bambu Studio project: the P1S/X1/P2S profile with the Lego values, one filament per colour.
+const loadBase = once(() => getJSON('bambu/p1s-base.json')), loadFilKeys = once(() => getJSON('bambu/filament-keys.json'));
 async function projectSettings(layer, rgbs, bed) {
-  baseCfgP ??= fetch('bambu/p1s-base.json').then((r) => r.json());
-  filKeysP ??= fetch('bambu/filament-keys.json').then((r) => r.json());
-  const cfg = JSON.parse(multiFilamentSettings(await baseCfgP, await filKeysP, layer, rgbs, fitState()));
+  const [baseCfg, filKeys] = await Promise.all([loadBase(), loadFilKeys()]).catch(() => { throw new Error('The printer settings could not be loaded. Check your connection and build again.'); });
+  const cfg = JSON.parse(multiFilamentSettings(baseCfg, filKeys, layer, rgbs, fitState()));
   if (bed !== 256) cfg.printable_area = ['0x0', `${bed}x0`, `${bed}x${bed}`, `0x${bed}`];
   return JSON.stringify(cfg, null, 4);
 }
@@ -210,9 +179,16 @@ function render(lines) {
 const setRow = (i, cls, text) => { const c = document.querySelector(`#r${i} td:last-child`); if (c) c.innerHTML = `<span class="pill ${cls}">${esc(text)}</span>`; };
 const sum = (o) => { for (const [k, v] of Object.entries(o)) $('s-' + k).textContent = v; };
 
+// Both memory refusals are estimates (limits.js), so each offers "Build anyway". Passing the rough up-front one still
+// stops at the exact one after loading, which offers its own; neither pass is remembered past the next build.
+let pass = { list: false, exact: false }, offered = null;
 async function build() {
+  const force = pass; pass = { list: false, exact: false };
   const btn = $('go');
-  btn.disabled = true; $('dl').hidden = true; lastFile = null;
+  btn.disabled = true; $('dl').hidden = true; $('anyway').hidden = true; lastFile = null;
+  const jobs = pool.session();   // this build's worker jobs: its deadline gives up these, nobody else's
+  setDeadline(Date.now() + 10 * 60 * 1000);   // no library request retries past 10 minutes into a build
+  const giveUp = setTimeout(() => jobs.abandon('the build took longer than 10 minutes'), 10 * 60 * 1000);   // and no worker is waited on past it
   try {
     const spares = $('spares').checked;
     const scale = num('scale') / 100, gap = num('gap'), bed = num('bed');
@@ -228,25 +204,30 @@ async function build() {
     }
     const lines = src.lines;
     render(lines);
+    // the list alone already tells whether writing it would fit (the exact check after loading stays)
+    const listMB = listNeedMB(lines.length), pageMB = memoryForPageMB(navigator);
+    if (listMB > pageMB && !force.list) { offered = 'list'; $('anyway').hidden = false; throw new Error(`This set is too big for this device: writing it needs about ${listMB} MB of memory and this browser gives a page about ${pageMB} MB. Build it on a computer, paste part of the list, or try anyway.`); }
     const colours = new Set(lines.map((l) => l.colour.id));
     sum({ parts: lines.reduce((a, l) => a + l.qty, 0), unique: new Set(lines.map((l) => l.ldraw)).size, colours: colours.size, plates: 0, missing: 0 });
 
     // load geometry, 4 at a time
-    let done = 0, missing = 0, unloaded = 0;   // unloaded: download failed, a new build tries again
+    const decisions = fins ? await loadDecisions().catch(() => null) : null, decisionsMissing = fins && !decisions;
+    let done = 0, missing = 0, unloaded = 0, notPrintable = 0;   // unloaded: download failed, a new build tries again
     const queue = lines.map((l, i) => [l, i]);
     const worker = async () => {
       while (queue.length) {
         const [l, i] = queue.shift();
         setRow(i, 'wait', 'loading');
-        let failed = '';
-        const g = await loadPart(l.ldraw, l.name).catch((e) => { failed = e.message; return null; });
-        l.geom = g && (fins ? await supported(g) : g);
-        if (!g && failed) { setRow(i, 'bad', 'load failed: ' + failed); unloaded++; }
+        let failed = '', incomplete = false;
+        const g = await loadPart(l.ldraw, l.name, jobs.run).catch((e) => { failed = e.message; incomplete = !!e.missingFiles; return null; });
+        l.geom = g && (fins ? await supported(g, decisions, jobs.run) : g);
+        if (!g && incomplete) { setRow(i, 'bad', 'not printable: ' + failed); notPrintable++; }   // the library lacks part of it: no retry helps
+        else if (!g && failed) { setRow(i, 'bad', 'load failed: ' + failed); unloaded++; }
         else if (!g) { setRow(i, 'bad', 'not in LDraw'); missing++; }
         else if (!fins || !l.geom.support || l.geom.support.note === 'prints as is') setRow(i, 'ok', 'ready');
         else setRow(i, l.geom.support.unserved ? 'skip' : 'ok', l.geom.support.note);
         done++; status(`Loading parts ${done} / ${lines.length}`);
-        sum({ missing });
+        sum({ missing: missing + notPrintable });
       }
     };
     await Promise.all([worker(), worker(), worker(), worker()]);
@@ -283,9 +264,10 @@ async function build() {
     }
     renderPlateTabs(viewPlates);
     // Writing the project holds every object's vertices as text: refuse in words rather than let a phone kill the tab.
-    const needMB = projectNeedMB(projectPlates), haveMB = memoryForPageMB();
-    if (projectPlates.length && needMB > haveMB) {
-      status(`This set is too big for this device: writing it needs about ${needMB} MB of memory and this browser gives a page about ${haveMB} MB. The plates are shown above; build the download on a computer, or paste part of the list.`);
+    const needMB = projectNeedMB(projectPlates), haveMB = memoryForPageMB(navigator);
+    if (projectPlates.length && needMB > haveMB && !force.exact) {
+      offered = 'exact'; $('anyway').hidden = false;
+      status(`This set is too big for this device: writing it needs about ${needMB} MB of memory and this browser gives a page about ${haveMB} MB. The plates are shown above; build the download on a computer, paste part of the list, or try anyway.`);
       return;
     }
     if (projectPlates.length) {
@@ -294,11 +276,13 @@ async function build() {
       lastName = base + '.3mf';
       $('dl').hidden = false;
     }
-    status(`Done: ${plateCount} plate${plateCount === 1 ? '' : 's'}${missing ? `, ${missing} part(s) not in the library` : ''}${unloaded ? `, ${unloaded} part(s) could not be downloaded (build again to retry)` : ''}${tooBig.length ? `, ${tooBig.length} too big for the bed` : ''} (marked in the table below).`);
+    status(`Done: ${plateCount} plate${plateCount === 1 ? '' : 's'}${missing ? `, ${missing} part(s) not in the library` : ''}${notPrintable ? `, ${notPrintable} part(s) not printable (pieces missing from the library)` : ''}${unloaded ? `, ${unloaded} part(s) could not be downloaded (build again to retry)` : ''}${tooBig.length ? `, ${tooBig.length} too big for the bed` : ''} (marked in the table below).${decisionsMissing ? ' The list of parts checked in Bambu Studio could not be loaded, so this build gave every part automatic supports; build again to retry.' : ''}`);
   } catch (e) {
     status(e.message || String(e));
   } finally {
     btn.disabled = false;
+    setDeadline(null);
+    clearTimeout(giveUp);
   }
 }
 
@@ -380,10 +364,11 @@ function selectTab(which) {
 
 $('setnum').value = store.get('s2p.set');
 $('setnum').oninput = () => { store.set('s2p.set', $('setnum').value); suggest(); };
-fetch('data/meta.json').then((r) => r.json()).then((m) => { $('datainfo').textContent = `${m.sets.toLocaleString()} sets, updated ${m.built}.`; }).catch(() => {});
+getJSON('data/meta.json').then((m) => { $('datainfo').textContent = `${m.sets.toLocaleString()} sets, updated ${m.built}.`; }).catch(() => {});
 $('tab-set').onclick = () => selectTab('set');
 $('tab-list').onclick = () => selectTab('list');
 $('go').onclick = build;
+$('anyway').onclick = () => { pass = { list: true, exact: offered === 'exact' }; build(); };
 $('fit').onclick = buildFitTest;
 for (const b of document.querySelectorAll('[data-fit]')) b.onclick = () => reportFit(b.dataset.part, b.dataset.fit);
 $('fitreset').onclick = () => { store.set('s2p.fit', ''); showFit(); status('Fit adjustments cleared.'); };
@@ -396,4 +381,5 @@ const drop = $('drop');
 drop.ondragover = (e) => { e.preventDefault(); drop.classList.add('over'); };
 drop.ondragleave = () => drop.classList.remove('over');
 drop.ondrop = async (e) => { e.preventDefault(); drop.classList.remove('over'); const f = e.dataTransfer.files[0]; if (f) $('listtext').value = await f.text(); };
-
+document.documentElement.dataset.ready = '1';   // index.html shows a message if this never happens (three.js or a script failed to load)
+$('loadfail').hidden = true;   // shown by index.html's 25 s timer on a slow connection: the app did start

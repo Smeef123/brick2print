@@ -95,10 +95,16 @@ export function showPlate(plate) {
 function resize() {
   const w = host.clientWidth, h = host.clientHeight;
   if (!w || !h) return;
+  renderer.setPixelRatio(Math.min(2, devicePixelRatio));   // read again: zooming the page or moving to another screen changes it
   renderer.setSize(w, h, false);
   camera.aspect = w / h; camera.updateProjectionMatrix(); frame();
 }
 new ResizeObserver(() => { resize(); }).observe(host);
+// a page zoom or a move to another screen changes devicePixelRatio without resizing the box
+(function watchRatio() { matchMedia(`(resolution: ${devicePixelRatio}dppx)`).addEventListener('change', () => { resize(); watchRatio(); }, { once: true }); })();
+// a phone may take the GPU back (another app, low memory); when it hands it back, draw again instead of staying blank
+renderer.domElement.addEventListener('webglcontextlost', (e) => e.preventDefault());
+renderer.domElement.addEventListener('webglcontextrestored', () => redraw());
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => buildBed(size));
 
 // Drawn only when something changed (a plate, the bed, the size, the camera), not 60 times a second: without a GPU
