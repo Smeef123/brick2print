@@ -131,8 +131,8 @@ function inWorker(kind, data) {
 }
 // a part's mesh (null: not in LDraw); throws if it could not be loaded at all
 const partCache = new Map();
-function loadPart(id) {
-  if (!partCache.has(id)) partCache.set(id, inWorker('load', { part: id }).then((r) => { if (r?.error) { partCache.delete(id); throw new Error(r.error); } return r; }));
+function loadPart(id, name = '') {
+  if (!partCache.has(id)) partCache.set(id, inWorker('load', { part: id, name }).then((r) => { if (r?.error) { partCache.delete(id); throw new Error(r.error); } return r; }));
   return partCache.get(id);
 }
 function supported(g) {
@@ -197,7 +197,7 @@ async function build() {
         const [l, i] = queue.shift();
         setRow(i, 'wait', 'loading');
         let failed = '';
-        const g = await loadPart(l.ldraw).catch((e) => { failed = e.message; return null; });
+        const g = await loadPart(l.ldraw, l.name).catch((e) => { failed = e.message; return null; });
         l.geom = g && (fins ? await supported(g) : g);
         if (!g) { setRow(i, 'bad', failed ? 'load failed: ' + failed : 'not in LDraw'); missing++; }
         else if (!fins || !l.geom.support || l.geom.support.note === 'prints as is') setRow(i, 'ok', 'ready');

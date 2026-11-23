@@ -12,10 +12,10 @@ const parts = fetch('parts.js').then((r) => r.text()).then((src) => {
   return import(URL.createObjectURL(new Blob([out], { type: 'text/javascript' })));
 });
 
-onmessage = async ({ data: { id, kind, part, mesh } }) => {
+onmessage = async ({ data: { id, kind, part, name, mesh } }) => {
   let r;
   try {
-    if (kind === 'load') r = await (await parts).loadPart(part);
+    if (kind === 'load') r = await (await parts).loadPart(part, name);
     else r = autoSupport(mesh);
   } catch (e) {
     r = kind === 'load' ? { error: e.message } : { mesh, note: 'support check failed: ' + e.message, unserved: 1 };

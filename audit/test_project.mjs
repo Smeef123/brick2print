@@ -22,6 +22,10 @@ const it = (g, cx, cy) => ({ key: g.name, label: g.name, mesh: g.mesh, cx, cy })
 // came out with every stud and tube piled up mid-part. Stud tops span (studs - 1) x 8 + 5.0 mm; tubes cross
 // the plate hollow 1.9 mm up.
 let geomOk = true;
+// a Modulex part (another system Rebrickable numbers like LEGO's) must not load the LEGO part with its number
+const mx = await loadPart('2361Mx', 'Modulex Brick 1 x 6 with Horizontal Grooves');
+if (mx) geomOk = false;
+console.log(`2361Mx (Modulex): ${mx ? 'loaded ' + mx.name + ' WRONG' : 'not in LDraw OK'}`);
 // Nothing may stay at LDraw's old 1.6 mm ceiling once the hollow is 2.2 deep: 3068b's tube hole and 15535's rim
 // ended 0.02 mm off the ceiling's edge and were left there, tearing the mesh.
 for (const [id, nx, ny] of [['3958', 6, 6], ['92438', 16, 8], ['3020', 4, 2], ['3068b', 0, 0], ['15535', 0, 0]]) {

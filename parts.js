@@ -87,7 +87,12 @@ function parseAsync(text) {
   return new Promise((res, rej) => loader.parse(text, res, rej));
 }
 
-export async function loadPart(id) {
+// Modulex is another brick system that Rebrickable numbers like LEGO parts; LDraw draws it as u7xxx, so its
+// numbers name unrelated LEGO parts there (2361Mx -> 2361, a 32x32 road baseplate; 2371 -> a boat hull).
+const OTHER_SYSTEM = /^modulex\b/i;
+/** name: the parts list's name for the part, when known (built-in sets have one). */
+export async function loadPart(id, name = '') {
+  if (OTHER_SYSTEM.test(name)) return null;
   if (geomCache.has(id)) return geomCache.get(id);
   const p = (async () => {
     if (!materialsReady) materialsReady = loader.preloadMaterials(LIB + 'LDConfig.ldr').catch(() => {});
