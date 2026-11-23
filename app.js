@@ -109,7 +109,7 @@ let jobId = 0;
 function inWorker(kind, data) {
   if (!pool.length) {
     for (let k = 0; k < Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 2) - 1)); k++) {
-      const w = new Worker('site_worker.js', { type: 'module' });
+      const w = new Worker('site_worker.js', { type: 'module', name: document.querySelector('script[type="importmap"]').textContent });   // the worker reads three.js's URLs from it
       w.busy = 0;
       w.onmessage = ({ data }) => { w.busy--; waiting.get(data.id).res(data.r); waiting.delete(data.id); };
       // a worker that failed to load or crashed leaves the pool (the next job makes a new pool if none is left)
