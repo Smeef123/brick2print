@@ -331,11 +331,13 @@ export function addPillars(mesh, failing, under = []) {
         if (q && !seen.has(key(q.i, q.j, q.k))) { seen.add(key(q.i, q.j, q.k)); stack.push(q); }
       }
     }
-    const is = group.map((p) => p.i), js = group.map((p) => p.j);
-    const w = (Math.max(...is) - Math.min(...is) + 1) * g, h = (Math.max(...js) - Math.min(...js) + 1) * g;
+    // loops, not Math.max(...)/push(...): a cluster can hold 100k+ cells, past the call stack's argument limit
+    let i0 = Infinity, i1 = -Infinity, j0 = Infinity, j1 = -Infinity;
+    for (const p of group) { i0 = Math.min(i0, p.i); i1 = Math.max(i1, p.i); j0 = Math.min(j0, p.j); j1 = Math.max(j1, p.j); }
+    const w = (i1 - i0 + 1) * g, h = (j1 - j0 + 1) * g;
     if (Math.min(w, h) < MIN_PILLAR_MM) { why.thin += group.length; continue; }
     pillars++;
-    keep.push(...group);
+    for (const p of group) keep.push(p);
   }
   if (!keep.length) return { mesh, pillars: 0, why };
   // one closed box per cell (the slicer unions touching boxes)
