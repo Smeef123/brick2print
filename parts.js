@@ -2,8 +2,11 @@
 import * as THREE from 'three';
 import { LDrawLoader } from 'three/addons/loaders/LDrawLoader.js';
 
-// raw.githubusercontent serves every file with CORS; jsDelivr refuses parts of this repo (over its 50 MB limit).
-let LIB = 'https://raw.githubusercontent.com/gkjohnson/ldraw-parts-library/master/complete/ldraw/';
+// The site's own copy of the official LDraw library (parts/ and p/ from library.ldraw.org's complete.zip), put next
+// to the page by the publish workflow every week, so new parts arrive without anyone updating a mirror. (The
+// gkjohnson GitHub mirror used before lacked parts added since; 3484, 4304, 5091 answered 404.) Relative: the
+// worker resolves it next to its own script.
+let LIB = 'ldraw/';
 const LDU_MM = 0.4;            // 1 LDraw unit = 0.4 mm
 
 // ---- print-accurate studs and tubes ----

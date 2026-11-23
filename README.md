@@ -6,7 +6,7 @@ Turn a brick set's parts list into ready-to-print 3MF plates, one batch per colo
 
 - Type a set number or part of its name: every official set is built in (no account or key), refreshed every Monday from Rebrickable's free database downloads by `scripts/build_data.py`. Minifigure parts are included.
 - Or paste/upload any parts list (`part, colour, quantity`; Rebrickable CSV exports work as they are).
-- Every part is fetched from the LDraw parts library, converted to millimetres, turned studs-up, and laid out on plates per colour (Bambu X1/P1 corner no-print zone avoided).
+- Every part is fetched from the official LDraw parts library (a copy published with the site and refreshed every week), converted to millimetres, turned studs-up, and laid out on plates per colour (Bambu X1/P1 corner no-print zone avoided).
 - The page opens on an empty 256 × 256 mm build plate; once built, every plate shows in 3D with a tab per plate.
 - You download one Bambu Studio project (.3mf) with every plate in it, one filament per colour, Lego settings already set.
 - Everything runs in your browser. Nothing is uploaded.
@@ -51,11 +51,23 @@ Build the fit-test plate (a 2x4 brick and a 2x4 plate, about 20 minutes), try it
 ## Credits
 
 - Support fins: [Support Fins](https://github.com/gittrahan/support-fins) engine, MIT.
-- Part geometry: [LDraw.org](https://www.ldraw.org) parts library, CC BY 2.0, by its many authors (served from [gkjohnson/ldraw-parts-library](https://github.com/gkjohnson/ldraw-parts-library)).
+- Part geometry: [LDraw.org](https://www.ldraw.org) parts library, CC BY 4.0 (older parts CC BY 2.0), by its many authors; the publish workflow copies `parts/` and `p/` from LDraw.org's `complete.zip` into the site.
 - Set inventories and colours: [Rebrickable](https://rebrickable.com).
 - Loader: [three.js](https://threejs.org) LDrawLoader. Zip: JSZip.
 
 LEGO® is a trademark of the LEGO Group, which does not sponsor, authorize or endorse this project. For personal use.
+
+## Keeping itself current
+
+`.github/workflows/pages.yml` publishes on every push, every Monday and by hand, with nobody in the loop: it rebuilds
+the set data from Rebrickable's downloads, copies the current official LDraw library next to the page, and only
+deploys if these pass on the built site: `audit/test_layout.mjs` (plate layout), `audit/test_loading.mjs` (library
+failures), `audit/test_supports_big.mjs`, `audit/test_fins_failure.mjs` and `audit/test_site.mjs` (headless Chrome:
+three real set numbers, lists, options, fit test, downloads). A failure keeps the previous site up.
+
+What still needs a PC with Bambu Studio: slicing. `audit/test_project.mjs` and `audit/test_site.mjs` slice every
+download there; the runner has no slicer. `bambu/decisions.json` (parts that print better plain than with automatic
+supports) comes from slicing every audited part: `node audit/refresh_decisions.mjs` reruns that audit and rewrites it.
 
 ## License
 
