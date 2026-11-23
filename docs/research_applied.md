@@ -197,3 +197,29 @@ under 0.5 mm2 starting in mid-air, median of up to 3 Bambu Studio CLI slices). T
   half of what it flags (88 of 193), and turning a clean part is the step that does harm (11 of the 19 turned
   clean parts got worse). Options: raise MIN_FAIL_MM2, widen the bridge or overhang bands, or never turn a
   part whose studs-up layers have no mid-air start (islandMm2 = 0). Each needs a new audit.
+
+## Parts that still start in mid-air, by cause (2026-11-22)
+
+From the same audit: 63 shipped plates with 0.5 mm2 or more (29 the check calls fixed, 22 it reports still
+unsupported, 12 that ship plain). Each mid-air region in the kept G-code was matched to the mesh faces within
+0.6 mm of where it starts (audit/out/perf/classify.mjs; a heuristic, regions are located by one cell, not traced
+by hand except 64782, 99780 and 15535):
+
+| Group | flat underside | slope 30-60 deg | steep 60-84 deg | no downward face near | only upward faces near |
+|---|---|---|---|---|---|
+| check calls fixed (29) | 12.8 | 50.3 | 2.4 | 47.5 | 7.2 mm2 |
+| still unsupported (22) | 41.7 | 22.1 | 49.2 | 146.2 | 136.4 mm2 |
+| ship plain (12) | 266.4 | 17.7 | 7.3 | 26.1 | 714.0 mm2 |
+
+- "Check calls fixed": 17 of the 29 have 2 mm2 or less, which MIN_FAIL_MM2 (2.0) accepts by design. The rest are
+  0.9-1.1 mm2 islands in pairs beside pillars on curved undersides (99780: pillar tops step 1.42-2.05 mm under a
+  round underside; the region starts up the curve, within the 1 mm cantilever band) and turned parts
+  (11126 61.7, 15400 10.3 mm2).
+- "Only upward faces" in the plain group is 64782 (470.8) and 15458 (235.4): Technic panels 5x11 and 3x11, a
+  0.8 mm sheet 6.8 mm above the bed on ribs. Studs down is worse (2,833 / 1,638 mm2 by the check).
+- Which rule would serve the 34 hard parts (still unsupported or plain): the check's best pose for 13 of them is
+  one it refuses as too tall (MAX_SLENDER 2.5 x the narrowest footprint side): 2397 55, 15458 54, 11946 0,
+  2421 2, 90981 28, 30115 3, 30240 48, 15303 2, 32034 4, 64782 91, 50900 26, 3648b 63, 2351Mx (Modulex, now not
+  loaded) mm2, against 337, 973, 8, 21, 461, 11, 439, 89, 65, 1352, 469, 86 studs up. A braced tall pose (the
+  Support Fins engine already makes braces) or a lower MAX_SLENDER limit is the candidate; both change the
+  rule and need a new audit and the user's decision. Not changed.
