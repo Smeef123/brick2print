@@ -155,6 +155,7 @@ const EMPTY_GAP_PENALTY = 1e6; // a pose with a layer of nothing between solid l
 // (even-odd scanlines on a FINE_MM grid) and report the cells of every region that
 // overlaps nothing in the layer below: [x, y, z] at the region's underside.
 const LAYER_MM = 0.2, FINE_MM = 0.1, MIN_ISLAND_CELLS = 4, MIN_LAYER_MM2 = 0.0, ISLAND_JOIN_CELLS = 12; // 1.2 mm: about three line widths, enough for hole roofs split by open meshes
+const STEP4 = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 function islandStarts(verts, tris) {
   let min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
   for (let k = 0; k < verts.length; k += 3) for (let a = 0; a < 3; a++) { min[a] = Math.min(min[a], verts[k + a]); max[a] = Math.max(max[a], verts[k + a]); }
@@ -179,13 +180,20 @@ function islandStarts(verts, tris) {
       if (pts.length >= 4) seg.push(pts[0], pts[1], pts[2], pts[3]);
     }
     const occ = new Uint8Array(W * H);
-    for (let j = 0; j < H; j++) {
-      const y = y0 + (j + 0.5) * f, xs = [];
-      for (let s = 0; s < seg.length; s += 4) {
-        const ya = seg[s + 1], yb = seg[s + 3];
+    // each segment goes only to the scanlines its y range spans (testing every segment on every row was
+    // 70% of 96874's 24 s support check)
+    const rows = Array.from({ length: H }, () => []);
+    for (let s = 0; s < seg.length; s += 4) {
+      const ya = seg[s + 1], yb = seg[s + 3];
+      const j0 = Math.max(0, Math.floor((Math.min(ya, yb) - y0) / f - 0.5)), j1 = Math.min(H - 1, Math.ceil((Math.max(ya, yb) - y0) / f - 0.5));
+      for (let j = j0; j <= j1; j++) {
+        const y = y0 + (j + 0.5) * f;
         if ((ya <= y) === (yb <= y)) continue;
-        xs.push(seg[s] + (y - ya) / (yb - ya) * (seg[s + 2] - seg[s]));
+        rows[j].push(seg[s] + (y - ya) / (yb - ya) * (seg[s + 2] - seg[s]));
       }
+    }
+    for (let j = 0; j < H; j++) {
+      const xs = rows[j];
       xs.sort((a, b) => a - b);
       for (let q = 0; q + 1 < xs.length; q += 2) {
         const i0 = Math.max(0, Math.ceil((xs[q] - x0) / f - 0.5)), i1 = Math.min(W - 1, Math.floor((xs[q + 1] - x0) / f - 0.5));
@@ -210,7 +218,7 @@ function islandStarts(verts, tris) {
           const c = stack.pop(); comp.push(c);
           if (prev[c]) touches = true;
           const i = c % W, j = (c - i) / W;
-          for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          for (const [di, dj] of STEP4) {
             const ii = i + di, jj = j + dj;
             if (ii < 0 || jj < 0 || ii >= W || jj >= H) continue;
             const n = jj * W + ii;
@@ -241,19 +249,33 @@ function islandStarts(verts, tris) {
 // cluster thinner than MIN_PILLAR_MM is skipped (too thin to print).
 export const PILLAR = Object.freeze({ GAP_MM: 0.2, CLEAR_MM: 0.3, MIN_PILLAR_MM: 0.8 });
 
-function floorBelow(verts, tris, x, y, z) {
-  let best = 0;
+// Highest surface under (x, y) more than 0.5 mm below z (0 = the plate). Triangles are bucketed by their
+// x/y extent on a 2 mm grid once per part, so a query reads only its own cell: scanning every triangle per
+// query made 92438's 126k candidate cells x 5 corners x 117k triangles take 22 minutes.
+function floorFinder(verts, tris) {
+  const G = 2, cells = new Map(), key = (i, j) => i * 65536 + j;
   for (let t = 0; t < tris.length / 3; t++) {
-    const [ax, ay, az, bx, by, bz, cx, cy, cz] = tri(verts, tris, t);
-    if (Math.min(az, bz, cz) > z) continue;
-    const ux = bx - ax, uy = by - ay, vx = cx - ax, vy = cy - ay, det = ux * vy - uy * vx;
-    if (Math.abs(det) < 1e-9) continue;
-    const px = x - ax, py = y - ay, s = (px * vy - py * vx) / det, r = (ux * py - uy * px) / det;
-    if (s < 0 || r < 0 || s + r > 1) continue;
-    const zz = az + s * (bz - az) + r * (cz - az);
-    if (zz < z - 0.5 && zz > best) best = zz;
+    const [ax, ay, , bx, by, , cx, cy] = tri(verts, tris, t);
+    for (let i = Math.floor(Math.min(ax, bx, cx) / G); i <= Math.floor(Math.max(ax, bx, cx) / G); i++)
+      for (let j = Math.floor(Math.min(ay, by, cy) / G); j <= Math.floor(Math.max(ay, by, cy) / G); j++) {
+        const k = key(i, j);
+        (cells.get(k) || cells.set(k, []).get(k)).push(t);
+      }
   }
-  return best;
+  return (x, y, z) => {
+    let best = 0;
+    for (const t of cells.get(key(Math.floor(x / G), Math.floor(y / G))) || []) {
+      const [ax, ay, az, bx, by, bz, cx, cy, cz] = tri(verts, tris, t);
+      if (Math.min(az, bz, cz) > z) continue;
+      const ux = bx - ax, uy = by - ay, vx = cx - ax, vy = cy - ay, det = ux * vy - uy * vx;
+      if (Math.abs(det) < 1e-9) continue;
+      const px = x - ax, py = y - ay, s = (px * vy - py * vx) / det, r = (ux * py - uy * px) / det;
+      if (s < 0 || r < 0 || s + r > 1) continue;
+      const zz = az + s * (bz - az) + r * (cz - az);
+      if (zz < z - 0.5 && zz > best) best = zz;
+    }
+    return best;
+  };
 }
 
 export function addPillars(mesh, failing, under = []) {
@@ -264,6 +286,7 @@ export function addPillars(mesh, failing, under = []) {
   const box = { i0: Math.floor(minX / g) - 4, j0: Math.floor(minY / g) - 4 };
   box.nx = Math.floor(maxX / g) + 5 - box.i0; box.ny = Math.floor(maxY / g) + 5 - box.j0;
   const grids = new Map();
+  const floorBelow = floorFinder(verts, tris);
   const occAt = (z) => { const k = Math.round(z / 0.5); if (!grids.has(k)) grids.set(k, sectionGrid(verts, tris, Math.max(0.4, k * 0.5), box)); return grids.get(k); };
   const clear = Math.ceil(CLEAR_MM / g);
   // keep a cell only if no part outline comes within CLEAR_MM of it anywhere along its column
@@ -280,7 +303,7 @@ export function addPillars(mesh, failing, under = []) {
     const ck = Math.floor(x / g) + ',' + Math.floor(y / g) + ',' + Math.round(z / 3);   // stacked undersides (3 mm apart or more) get their own pillars
     if (taken.has(ck)) continue;
     // the foot stands on the highest point under the cell's corners: on a slope or curve no part of it hangs in the air
-    const top = z - GAP_MM, floor = Math.max(...[[-1, -1], [1, -1], [1, 1], [-1, 1], [0, 0]].map(([a, b]) => floorBelow(verts, tris, x + a * g / 2, y + b * g / 2, z)));
+    const top = z - GAP_MM, floor = Math.max(...[[-1, -1], [1, -1], [1, 1], [-1, 1], [0, 0]].map(([a, b]) => floorBelow(x + a * g / 2, y + b * g / 2, z)));
     if (top - floor < 0.4) { why.low++; continue; }
     const i = Math.floor(x / g) - box.i0, j = Math.floor(y / g) - box.j0;
     let ok = true;

@@ -18,15 +18,18 @@ export async function useLocalLibrary() {
     const server = http.createServer((req, res) => {
       const p = path.join(ROOT, decodeURIComponent(new URL(req.url, 'http://x/').pathname));
       fs.stat(p, (e, st) => {
-        if (e || !st.isFile() || !p.startsWith(path.normalize(ROOT))) { res.writeHead(404).end(); return; }
-        res.writeHead(200, { 'Content-Length': st.size, 'Cache-Control': 'no-store' });
+        if (e || !st.isFile() || !p.startsWith(path.normalize(ROOT))) { res.writeHead(404, { Connection: 'close' }).end(); return; }
+        res.writeHead(200, { 'Content-Length': st.size, 'Cache-Control': 'no-store', Connection: 'close' });
         if (req.method === 'HEAD') res.end(); else fs.createReadStream(p).pipe(res);
       });
     });
+    // no keep-alive: a part's mesh work can block this thread past the 5 s idle limit, and the client then
+    // reuses a socket the server already closed (ECONNRESET: 3958 read as missing after 92438)
     const listen = (port) => new Promise((ok, fail) => server.once('error', fail).listen(port, '127.0.0.1', ok));
     await listen(PORT).catch(() => listen(0));   // 8767 taken by a busy process: any free port
     server.unref();
     url = `http://127.0.0.1:${server.address().port}/`;
   }
   setLibrary(url);
+  return url;
 }

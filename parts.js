@@ -52,7 +52,10 @@ function tubeDat() {
 // out inside-out right side out: through three.js some references flip the winding (upside-down tubes
 // in 3062a and 85861 came out inside-out while 3001's were fine).
 const OWN = '9716';
-const own = (text) => text.replace('0 BFC CERTIFY CCW', `0 BFC CERTIFY CCW\n0 !COLOUR Set2Print_Primitive CODE ${OWN} VALUE #808080 EDGE #333333`).replace(/^([34]) 16 /gm, `$1 ${OWN} `);
+// Marked Primitive like the files they replace: three.js merges primitives into their parent with the
+// reference's matrix, but loads any other file as its own group, and a group inside a primitive (stud4 in
+// stug4-7x7) loses the primitive's matrix. Unmarked, 92438's 128 studs and 105 tubes piled up mid-part.
+const own = (text) => text.replace('0 BFC CERTIFY CCW', `0 !LDRAW_ORG Primitive\n0 BFC CERTIFY CCW\n0 !COLOUR Set2Print_Primitive CODE ${OWN} VALUE #808080 EDGE #333333`).replace(/^([34]) 16 /gm, `$1 ${OWN} `);
 const TUBE = own(tubeDat());
 const PRINT_PRIMITIVES = { 'stud.dat': own(studDat()), 'stud4.dat': TUBE, 'stud4a.dat': TUBE };
 const dataUrl = (text) => 'data:text/plain;charset=utf-8,' + encodeURIComponent(text);
