@@ -1,0 +1,237 @@
+// Check the site itself in headless Chrome, every path a visitor uses, and slice what it downloads in the
+// Bambu Studio CLI (every plate must get G-code, each on its own filament). Exits 1 on any failure.
+//   node audit/test_site.mjs [local|<url>]
+// local serves this checkout on 127.0.0.1:8768 (parts still come from the site's own LDraw source).
+// Needs `npm install` in audit/ (playwright-core) and Chrome installed; the browser is headless.
+// Covers: page load and empty 3D bed; set suggestions; a set by number and by name; plate tabs and the 3D view;
+// paste a list (merging, colour names and numbers) with bed, gap, layer, scale and supports-off options; a
+// Rebrickable CSV upload with and without spares; bad input messages; fit-test reports, plate and reset.
+import fs from 'node:fs';
+import http from 'node:http';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { chromium } from 'playwright-core';
+import JSZip from 'jszip';
+
+const HERE = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, '$1'));
+const ROOT = path.join(HERE, '..');
+const CHROME = 'C:/Program Files/Google/Chrome/Application/chrome.exe';
+const BAMBU = 'C:/Program Files/Bambu Studio/bambu-studio.exe';
+const SET = '11926-1', SET_NAME = 'Parts for Wooden Minifigure';   // 29 pieces, 12 unique parts, all in LDraw
+const [where = 'local'] = process.argv.slice(2);
+const OUT = path.join(HERE, 'out', 'site-test', where === 'local' ? 'local' : 'live');
+fs.rmSync(OUT, { recursive: true, force: true }); fs.mkdirSync(OUT, { recursive: true });
+
+const failures = [];
+const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if (!ok) failures.push(what); return ok; };
+
+let url = where;
+if (where === 'local') {
+  const types = { '.html': 'text/html', '.js': 'text/javascript', '.json': 'application/json', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png' };
+  const server = http.createServer((req, res) => {
+    let p = path.join(ROOT, decodeURIComponent(new URL(req.url, 'http://x/').pathname));
+    if (p.endsWith(path.sep) || p === ROOT) p = path.join(p, 'index.html');
+    if (!p.startsWith(ROOT) || !fs.existsSync(p) || !fs.statSync(p).isFile()) { res.writeHead(404).end(); return; }
+    res.writeHead(200, { 'Content-Type': types[path.extname(p)] || 'application/octet-stream', 'Cache-Control': 'no-store' });
+    fs.createReadStream(p).pipe(res);
+  });
+  await new Promise((ok, no) => server.once('error', no).listen(8768, '127.0.0.1', ok));
+  server.unref();
+  url = 'http://127.0.0.1:8768/';
+}
+
+// what the downloaded project holds: plates (name, objects, filament), filament colours, settings
+async function readProject(file) {
+  const z = await JSZip.loadAsync(fs.readFileSync(file));
+  const ms = await z.file('Metadata/model_settings.config').async('string');
+  const cfg = JSON.parse(await z.file('Metadata/project_settings.config').async('string'));
+  const model = await z.file('3D/3dmodel.model').async('string');
+  const extruder = Object.fromEntries([...ms.matchAll(/<object id="(\d+)">\s*<metadata key="name"[^>]*>\s*<metadata key="extruder" value="(\d+)"/g)].map((m) => [m[1], +m[2]]));
+  const plates = [...ms.matchAll(/<plate>([\s\S]*?)<\/plate>/g)].map((m) => {
+    const objs = [...m[1].matchAll(/key="object_id" value="(\d+)"/g)].map((o) => o[1]);
+    return { name: /plater_name" value="([^"]*)"/.exec(m[1])[1], objects: objs.length, filaments: [...new Set(objs.map((o) => extruder[o]))] };
+  });
+  const scales = [...new Set([...model.matchAll(/transform="([\d.]+) /g)].map((m) => +m[1]))];
+  return { plates, cfg, scales };
+}
+
+// one CLI run slices every plate; per plate: G-code present and on the plate's own filament
+async function slicedOk(file, proj, tag) {
+  const dir = path.join(OUT, 'slice-' + tag); fs.mkdirSync(dir, { recursive: true });
+  const r = spawnSync(BAMBU, ['--slice', '0', '--outputdir', dir, '--export-3mf', 's.3mf', '--allow-newer-file', file], { stdio: 'ignore', timeout: 180000 });   // the CLI can stall at start-up
+  const rf = path.join(dir, 'result.json');
+  if (!fs.existsSync(rf)) return check(false, `${tag}: slicer gave no result within 180 s (${r.error?.code || 'exit ' + r.status})`);
+  const res = JSON.parse(fs.readFileSync(rf, 'utf8'));
+  const z = await JSZip.loadAsync(fs.readFileSync(path.join(dir, 's.3mf')));
+  let good = 0;
+  for (let k = 1; k <= proj.plates.length; k++) {
+    const g = await z.file(`Metadata/plate_${k}.gcode`)?.async('string');
+    const tools = g ? [...new Set([...g.matchAll(/^M620 S(\d+)/gm)].map((m) => +m[1] + 1))].filter((t) => t !== 256) : [];   // S255 = unload
+    const want = proj.plates[k - 1].filaments;
+    if (g && g.length > 1000 && (tools.length ? tools.join() === want.join() : want.join() === '1')) good++;
+    else console.log(`     plate ${k} ${proj.plates[k - 1].name}: ${g ? 'filament ' + tools.join() + ' want ' + want.join() : 'no G-code'}`);
+  }
+  return check(res.return_code === 0 && good === proj.plates.length, `${tag}: slicer return ${res.return_code}, ${good} of ${proj.plates.length} plates sliced on their own filament`);
+}
+
+const browser = await chromium.launch({ executablePath: CHROME, headless: true });
+const errors = [];
+const unstamped = new Set();   // the publish step adds ?v=<commit> to the site's own files so a visitor never mixes versions
+try {
+  const ctx = await browser.newContext({ acceptDownloads: true, viewport: { width: 1400, height: 900 } });
+  const page = await ctx.newPage();
+  // LDraw's loader tries each folder (parts/, p/, models/, the root) and expects 404s; the browser's own favicon request is not the page's
+  const probe = (u) => /ldraw-parts-library\/.*\.dat$/i.test(u) || /\/favicon\.ico$/.test(u);
+  page.on('console', (m) => { if (m.type() === 'error' && !(/Failed to load resource/.test(m.text()) && probe(m.location().url))) errors.push(`console: ${m.text()} ${m.location().url || ''}`); });
+  page.on('pageerror', (e) => errors.push('page: ' + e.message));
+  page.on('requestfailed', (r) => errors.push(`request failed: ${r.url()} ${r.failure()?.errorText}`));
+  page.on('request', (r) => { const u = new URL(r.url()); if (where !== 'local' && r.url().startsWith(url) && /\.(js|json)$/.test(u.pathname) && !u.pathname.includes('/vendor/') && !u.searchParams.get('v')) unstamped.add(u.pathname); });
+  page.on('response', (r) => { if (r.status() >= 400 && !probe(r.url())) errors.push(`HTTP ${r.status()}: ${r.url()}`); });
+  const text = (sel) => page.textContent(sel).then((t) => t.trim());
+  const view = () => page.locator('#viewport canvas').screenshot();
+  const differ = (a, b) => Buffer.compare(a, b) !== 0;
+
+  async function build() {
+    const t0 = Date.now();
+    await page.click('#go');
+    // build() disables the button until it ends
+    await page.waitForFunction(() => !document.getElementById('go').disabled, null, { timeout: 20 * 60000, polling: 500 });
+    const r = { s: (Date.now() - t0) / 1000, status: await text('#status'), tabs: await page.locator('#platetabs button').count(), dl: await page.isVisible('#dl') };
+    for (const k of ['parts', 'unique', 'colours', 'plates', 'missing']) r[k] = +(await text('#s-' + k));
+    r.rows = await page.$$eval('#rows tr', (trs) => trs.map((tr) => [...tr.children].map((td) => td.textContent.trim())));
+    console.log(`     "${r.status}" in ${r.s.toFixed(1)} s: ${r.parts} pieces, ${r.unique} unique, ${r.colours} colours, ${r.plates} plates, ${r.tabs} tabs, ${r.missing} missing`);
+    return r;
+  }
+  async function download(tag) {
+    const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 60000 }), page.click('#dl')]);
+    const file = path.join(OUT, tag + '-' + dl.suggestedFilename());
+    await dl.saveAs(file);
+    const proj = await readProject(file);
+    console.log(`     ${path.basename(file)}: ${fs.statSync(file).size} bytes, plates ${proj.plates.map((p) => `${p.name} (${p.objects})`).join(', ')}`);
+    return { file, proj };
+  }
+
+  // 1. page load
+  await page.goto(url, { waitUntil: 'load' });
+  const info = await page.waitForFunction(() => /sets, updated/.test(document.getElementById('datainfo').textContent), null, { timeout: 30000 }).then(() => true, () => false);
+  check(info, 'page loads with the set list (' + (await text('#datainfo')) + ')');
+  const box = await page.locator('#viewport canvas').boundingBox();
+  check(box && box.width > 200 && box.height > 200, `3D view canvas ${box ? Math.round(box.width) + 'x' + Math.round(box.height) : 'missing'}`);
+  check(await page.isVisible('#viewnote') && /256 × 256/.test(await text('#viewnote')), 'empty-plate note shown');
+  await page.waitForTimeout(500);
+  const empty = await view();
+
+  // the page's longest main-thread block: while one runs, the page can't scroll, click or redraw
+  await page.evaluate(() => { window.__longest = 0; new PerformanceObserver((l) => { for (const e of l.getEntries()) window.__longest = Math.max(window.__longest, e.duration); }).observe({ type: 'longtask' }); });
+
+  // 2. suggestions while typing
+  await page.fill('#setnum', 'wooden minif');
+  await page.dispatchEvent('#setnum', 'input');
+  const sug = await page.waitForFunction((s) => [...document.querySelectorAll('#setlist option')].some((o) => o.value === s), SET, { timeout: 10000 }).then(() => true, () => false);
+  check(sug, `typing a name suggests ${SET} (${await page.locator('#setlist option').count()} suggestions)`);
+
+  // 3. a set by number, default options
+  console.log(`-- set ${SET} by number`);
+  await page.fill('#setnum', SET);
+  const a = await build();
+  const frozen = await page.evaluate(() => window.__longest);
+  check(frozen < 1000, `page stays responsive while building: longest freeze ${Math.round(frozen)} ms (limit 1000)`);
+  check(/^Done: \d+ plates/.test(a.status) && a.plates > 0 && a.missing === 0, 'set by number builds with every part found');
+  check(a.parts === 29 && a.rows.length >= a.unique, `parts table: ${a.rows.length} rows, ${a.parts} pieces (want 29)`);
+  check(!a.rows.some((r) => /failed|not in LDraw/.test(r[4])), 'no row reports a failed support check or missing part');
+  check(a.tabs === a.plates && a.dl, 'one tab per plate and the download button shown');
+  check(!(await page.isVisible('#viewnote')), 'empty-plate note hidden once plates are shown');
+  await page.waitForTimeout(500);
+  const first = await view();
+  check(differ(empty, first), '3D view shows the first plate (differs from the empty bed)');
+  await page.locator('#platetabs button').nth(1).click();
+  await page.waitForTimeout(500);
+  const second = await view();
+  check(await page.locator('#platetabs button').nth(1).getAttribute('aria-pressed') === 'true' && differ(first, second), 'clicking the second plate tab selects it and changes the view');
+  const A = await download('number');
+  check(A.proj.plates.length === a.plates, `project has ${A.proj.plates.length} plates, page showed ${a.plates}`);
+  check(A.proj.cfg.filament_colour.length === a.colours && A.proj.plates.every((p) => p.filaments.length === 1), `one filament per colour (${A.proj.cfg.filament_colour.join(' ')}), one per plate`);
+  check(A.proj.cfg.layer_height === '0.2' && A.proj.cfg.enable_support === '0' && A.proj.scales.join() === '1', 'default settings: 0.2 mm layers, slicer supports off, scale 1');
+  await slicedOk(A.file, A.proj, 'number');
+
+  // 4. the same set by name
+  console.log(`-- set by name "${SET_NAME}"`);
+  await page.fill('#setnum', SET_NAME);
+  const b = await build();
+  check(/^Done/.test(b.status) && b.parts === a.parts && b.plates === a.plates, 'set by name finds the same set');
+
+  // 5. pasted list with every option changed
+  console.log('-- pasted list, bed 180, gap 4, 0.10 mm, scale 150 %, supports off');
+  await page.click('#tab-list');
+  check(await page.isVisible('#pane-list') && !(await page.isVisible('#pane-set')), 'list tab shows the list pane');
+  await page.fill('#listtext', '3001,4,2\n3003,Yellow,4\n3020,0,1\n3001,Red,1');
+  await page.fill('#bed', '180'); await page.dispatchEvent('#bed', 'change');
+  check(/180 × 180/.test(await text('#viewnote')), 'empty-plate note follows the bed size: ' + (await text('#viewnote')));
+  await page.fill('#gap', '4'); await page.selectOption('#layer', '0.1'); await page.fill('#scale', '150');
+  await page.uncheck('#fins');
+  const c = await build();
+  check(/^Done/.test(c.status) && c.parts === 8 && c.unique === 3 && c.colours === 3, 'list merges 3001 red by number and by name; 3 colours');
+  const C = await download('list');
+  const rgb = C.proj.cfg.filament_colour.join(' ');
+  check(['#C91A09', '#F2CD37', '#05131D'].every((h) => rgb.includes(h)), `colours red, yellow, black (${rgb})`);
+  check(C.proj.cfg.layer_height === '0.1' && C.proj.cfg.printable_area?.join() === '0x0,180x0,180x180,0x180' && C.proj.scales.join() === '1.5', `options written: layer ${C.proj.cfg.layer_height}, bed ${C.proj.cfg.printable_area}, scale ${C.proj.scales}`);
+  await slicedOk(C.file, C.proj, 'list');
+  await page.fill('#bed', '256'); await page.dispatchEvent('#bed', 'change');
+  await page.fill('#gap', '12'); await page.selectOption('#layer', '0.2'); await page.fill('#scale', '100'); await page.check('#fins');
+
+  // 5b. a part LDraw lacks and one too big for the bed are reported, the rest still builds
+  console.log('-- missing and too-big parts, bed 100');
+  await page.fill('#bed', '100'); await page.uncheck('#fins');
+  await page.fill('#listtext', '3001,4,1\n92438,4,1\nnotapart123,4,1');
+  const m = await build();
+  const rowOf = (id) => m.rows.find((r) => r[0] === id)?.[4] || '';
+  check(m.missing === 1 && m.plates === 1 && /1 part\(s\) not in the library/.test(m.status) && /1 too big/.test(m.status), 'status names the missing and the too-big part');
+  check(/not in LDraw/.test(rowOf('notapart123')) && /too big for a 100 mm bed/.test(rowOf('92438')), `rows: notapart123 "${rowOf('notapart123')}", 92438 "${rowOf('92438')}"`);
+  await page.fill('#bed', '256'); await page.dispatchEvent('#bed', 'change'); await page.check('#fins');
+
+  // 6. Rebrickable CSV upload, spares off then on
+  console.log('-- CSV upload');
+  const csv = path.join(OUT, 'list.csv');
+  fs.writeFileSync(csv, 'Part,Color,Quantity,Is Spare\n3001,4,2,False\n3001,4,1,True\n3024,15,3,False\n');
+  await page.setInputFiles('#file', csv);
+  await page.waitForFunction(() => document.getElementById('listtext').value.includes('Is Spare'), null, { timeout: 5000 }).catch(() => {});
+  const d = await build();
+  check(d.parts === 5, `uploaded CSV without spares: ${d.parts} pieces (want 5)`);
+  await page.check('#spares');
+  const e = await build();
+  check(e.parts === 6, `with spares: ${e.parts} pieces (want 6)`);
+  await page.uncheck('#spares');
+
+  // 7. bad input says what to do
+  await page.fill('#listtext', '');
+  const bad = await build();
+  check(/Paste a parts list/.test(bad.status), 'empty list explains itself');
+  check(bad.plates === 0 && bad.parts === 0 && !bad.dl && !bad.rows.some((r) => r[0] === '3001'), `a failed build clears the last one's results (shows ${bad.parts} pieces, ${bad.plates} plates)`);
+  await page.click('#tab-set');
+  await page.fill('#setnum', 'zzqq no such set');
+  check(/No set matches/.test((await build()).status), 'unknown set explains itself');
+
+  // 8. fit test
+  console.log('-- fit test');
+  await page.click('[data-part="studs"][data-fit="tight"]');
+  await page.click('[data-part="hollow"][data-fit="loose"]');
+  check(/studs -0\.05 mm, underside -0\.05 mm/.test(await text('#fitnow')), 'fit reports adjust the settings: ' + (await text('#fitnow')));
+  await page.click('#fit');
+  await page.waitForFunction(() => /Fit test ready/.test(document.getElementById('status').textContent), null, { timeout: 60000 }).catch(() => {});
+  const F = await download('fit');
+  check(F.proj.plates.length === 1 && F.proj.plates[0].objects === 2 && F.proj.cfg.xy_contour_compensation === '-0.05' && F.proj.cfg.xy_hole_compensation === '-0.05', `fit-test plate: ${F.proj.plates[0]?.objects} objects, contour ${F.proj.cfg.xy_contour_compensation}, hole ${F.proj.cfg.xy_hole_compensation}`);
+  await slicedOk(F.file, F.proj, 'fit');
+  await page.click('#fitreset');
+  check(/Not tested yet/.test(await text('#fitnow')), 'fit reset');
+  // phone width: no sideways scrolling
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(300);
+  const wide = await page.evaluate(() => document.documentElement.scrollWidth);
+  check(wide <= 390, `phone width 390 px: page is ${wide} px wide`);
+} catch (e) {
+  check(false, 'test stopped: ' + e.message.split('\n')[0]);
+} finally { await browser.close(); }
+if (where !== 'local') check(!unstamped.size, unstamped.size ? 'unstamped site files: ' + [...unstamped].join(' ') : 'every site script and data file carries its version stamp');
+check(!errors.length, errors.length ? `${errors.length} browser errors:\n  ` + errors.join('\n  ') : 'no browser errors');
+console.log(failures.length ? `FAIL (${failures.length})` : 'PASS');
+process.exit(failures.length ? 1 : 0);

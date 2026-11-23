@@ -8,7 +8,7 @@ Turn a brick set's parts list into ready-to-print 3MF plates, one batch per colo
 - Or paste/upload any parts list (`part, colour, quantity`; Rebrickable CSV exports work as they are).
 - Every part is fetched from the LDraw parts library, converted to millimetres, turned studs-up, and laid out on plates per colour (Bambu X1/P1 corner no-print zone avoided).
 - The page opens on an empty 256 × 256 mm build plate; once built, every plate shows in 3D with a tab per plate.
-- You download one Bambu Studio project (.3mf) with every plate in it, one filament per colour, Lego settings already set. STLs and notes are a separate optional download.
+- You download one Bambu Studio project (.3mf) with every plate in it, one filament per colour, Lego settings already set.
 - Everything runs in your browser. Nothing is uploaded.
 
 ## Automatic supports
@@ -20,7 +20,7 @@ Print with slicer supports **off**. Set2Print decides supports by geometry:
 - Studs-up is kept unless turning leaves less than half the unsupported area it does (after pillars), and a turned part must stand steadily (no taller than 2.5× its narrowest footprint side).
 - Every spot that still fails gets a **breakaway pillar**: a column from the plate (or the part below) up to 0.2 mm short of the underside, kept 0.3 mm clear of the part's sides and at least 0.8 mm wide. This covers flat and curved undersides such as sideways studs.
 - Anything pillars can't reach gets breakaway fins from the [Support Fins](https://printfins.com) engine (vendored unchanged in `vendor/support-fins`, MIT).
-- `supports.txt` in the download lists every part that was turned, pillared or finned, and anything left that still needs care.
+- The parts table on the page says for every part whether it was turned, pillared or finned, and anything left that still needs care. The check runs in background threads, so the page stays usable while big parts are checked.
 
 ## Lego print settings (written into every plate)
 

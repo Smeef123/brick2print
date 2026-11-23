@@ -2,7 +2,6 @@
 import { COLORS } from './colors.js';
 import { loadPart } from './parts.js';
 import { multiFilamentSettings, projectFile } from './export3mf.js';
-import { autoSupport } from './supports.js';
 import { buildBed, showPlate } from './viewer.js';
 import { pack } from './layout.js';
 
@@ -104,16 +103,33 @@ const supportCache = new Map();
 // studs-up (audit/decisions.py): those print plain. Unaudited parts use the geometry rules.
 let verifiedP = null;
 const verified = () => (verifiedP ??= fetch('bambu/decisions.json').then((r) => (r.ok ? r.json() : {})).catch(() => ({})));
+// The check runs in worker threads (supports_worker.js): one big part takes seconds to minutes and would freeze the page.
+const pool = [], waiting = new Map();
+let jobId = 0;
+function checkInWorker(mesh) {
+  if (!pool.length) {
+    for (let k = 0; k < Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 2) - 1)); k++) {
+      const w = new Worker('supports_worker.js', { type: 'module' });
+      w.busy = 0;
+      w.onmessage = ({ data }) => { w.busy--; waiting.get(data.id).res(data.s); waiting.delete(data.id); };
+      w.onerror = (e) => { e.preventDefault(); for (const [id, j] of waiting) if (j.w === w) { j.res({ mesh: j.mesh, note: 'support check failed: ' + (e.message || 'worker error'), unserved: 1 }); waiting.delete(id); } w.busy = 0; };
+      pool.push(w);
+    }
+  }
+  const w = pool.reduce((a, b) => (b.busy < a.busy ? b : a));
+  w.busy++;
+  return new Promise((res) => {
+    const id = ++jobId;
+    waiting.set(id, { res, w, mesh });
+    w.postMessage({ id, mesh });   // copied, not moved: the loaded mesh stays cached here
+  });
+}
 function supported(g) {
   if (!supportCache.has(g.name)) {
-    supportCache.set(g.name, verified().then((v) => new Promise((res) => setTimeout(() => {
-      let s;
-      if (v[g.name] === 'plain') s = { mesh: g.mesh, note: 'prints as is (checked in Bambu Studio)', before: 0, after: 0, unserved: 0 };
-      else {
-        try { s = autoSupport(g.mesh); } catch (e) { s = { mesh: g.mesh, note: 'support check failed: ' + e.message, unserved: 1 }; }
-      }
-      res({ name: g.name, mesh: s.mesh, support: s });
-    }, 0))));
+    supportCache.set(g.name, verified().then(async (v) => {
+      const s = v[g.name] === 'plain' ? { mesh: g.mesh, note: 'prints as is (checked in Bambu Studio)', before: 0, after: 0, unserved: 0 } : await checkInWorker(g.mesh);
+      return { name: g.name, mesh: s.mesh, support: s };
+    }));
   }
   return supportCache.get(g.name);
 }
@@ -148,7 +164,8 @@ async function build() {
     const gap = parseFloat($('gap').value) || 12;
     const bed = parseFloat($('bed').value) || 256;
     const fins = $('fins').checked;
-    buildBed(bed); showPlate(null); $('platetabs').innerHTML = ''; $('viewnote').hidden = false;
+    showBed(bed); showPlate(null); $('platetabs').innerHTML = ''; $('viewnote').hidden = false;
+    $('rows').innerHTML = '<tr><td colspan="5" class="hint">Parts appear here once you build plates.</td></tr>'; sum({ parts: 0, unique: 0, colours: 0, plates: 0, missing: 0 });   // a failed build must not leave the last one's results
     let src;
     if ($('tab-set').getAttribute('aria-selected') === 'true') {
       status('Looking up the set…');
@@ -214,7 +231,7 @@ async function build() {
       lastName = base + '.3mf';
       $('dl').hidden = false;
     }
-    status(`Done: ${plateCount} plates${missing ? `, ${missing} part(s) not in the library` : ''}${tooBig.length ? `, ${tooBig.length} too big for the bed` : ''} (marked in the table below).`);
+    status(`Done: ${plateCount} plate${plateCount === 1 ? '' : 's'}${missing ? `, ${missing} part(s) not in the library` : ''}${tooBig.length ? `, ${tooBig.length} too big for the bed` : ''} (marked in the table below).`);
   } catch (e) {
     status(e.message || String(e));
   } finally {
@@ -308,7 +325,8 @@ $('fit').onclick = buildFitTest;
 for (const b of document.querySelectorAll('[data-fit]')) b.onclick = () => reportFit(b.dataset.part, b.dataset.fit);
 $('fitreset').onclick = () => { store.set('s2p.fit', ''); showFit(); status('Fit adjustments cleared.'); };
 showFit();
-$('bed').onchange = () => buildBed(parseFloat($('bed').value) || 256);
+function showBed(size) { buildBed(size); $('viewnote').textContent = `Empty plate (${size} × ${size} mm). Find a set or paste a list, then Build plates.`; }
+$('bed').onchange = () => showBed(parseFloat($('bed').value) || 256);
 $('dl').onclick = () => save(lastFile, lastName);
 $('file').onchange = async (e) => { const f = e.target.files[0]; if (f) { $('listtext').value = await f.text(); } };
 const drop = $('drop');

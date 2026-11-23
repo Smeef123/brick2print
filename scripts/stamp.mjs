@@ -4,7 +4,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const [dir, ver] = process.argv.slice(2);
-const local = /((?:from |import |src=|fetch\()['"](?:\.\/)?(?:[\w-]+\/)*[\w-]+\.(?:js|json))(['"])/g;
+// quotes include backticks: data/sets/${bucket}.json is a template literal
+const local = /((?:from |import |src=|fetch\(|Worker\()['"`](?:\.\/)?(?:[\w-]+\/)*[\w${}()-]+\.(?:js|json))(['"`])/g;
 const walk = (d) => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(path.join(d, e.name)) : [path.join(d, e.name)]));
 let n = 0;
 for (const f of walk(dir).filter((f) => /\.(js|html)$/.test(f) && !f.includes(`${path.sep}vendor${path.sep}`) && !f.includes('/vendor/'))) {
