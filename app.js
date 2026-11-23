@@ -1,6 +1,5 @@
 // Set2Print: parts list -> LDraw geometry -> studs-up meshes in mm -> plates per colour -> one Bambu Studio .3mf.
 import { COLORS } from './colors.js';
-import { loadPart } from './parts.js';
 import { multiFilamentSettings, projectFile } from './export3mf.js';
 import { buildBed, showPlate } from './viewer.js';
 import { pack } from './layout.js';
@@ -103,19 +102,21 @@ const supportCache = new Map();
 // studs-up (audit/decisions.py): those print plain. Unaudited parts use the geometry rules.
 let verifiedP = null;
 const verified = () => (verifiedP ??= fetch('bambu/decisions.json').then((r) => (r.ok ? r.json() : {})).catch(() => ({})));
-// The check runs in worker threads (supports_worker.js): one big part takes seconds to minutes and would freeze the page.
+// Loading a part and its support check run in worker threads (site_worker.js): a baseplate takes seconds to
+// load and a big part seconds to minutes to check, which would freeze the page.
 const pool = [], waiting = new Map();
 let jobId = 0;
-function checkInWorker(mesh) {
+function inWorker(kind, data) {
   if (!pool.length) {
     for (let k = 0; k < Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 2) - 1)); k++) {
-      const w = new Worker('supports_worker.js', { type: 'module' });
+      const w = new Worker('site_worker.js', { type: 'module' });
       w.busy = 0;
-      w.onmessage = ({ data }) => { w.busy--; waiting.get(data.id).res(data.s); waiting.delete(data.id); };
-      // a worker that failed to load or crashed leaves the pool (the next check makes a new pool if none is left)
+      w.onmessage = ({ data }) => { w.busy--; waiting.get(data.id).res(data.r); waiting.delete(data.id); };
+      // a worker that failed to load or crashed leaves the pool (the next job makes a new pool if none is left)
       w.onerror = (e) => {
         e.preventDefault(); w.terminate(); if (pool.includes(w)) pool.splice(pool.indexOf(w), 1);
-        for (const [id, j] of waiting) if (j.w === w) { j.res({ mesh: j.mesh, note: 'support check failed: ' + (e.message || 'worker error'), unserved: 1 }); waiting.delete(id); }
+        const why = e.message || 'worker error';
+        for (const [id, j] of waiting) if (j.w === w) { j.res(j.kind === 'load' ? { error: why } : { mesh: j.data.mesh, note: 'support check failed: ' + why, unserved: 1 }); waiting.delete(id); }
       };
       pool.push(w);
     }
@@ -124,14 +125,20 @@ function checkInWorker(mesh) {
   w.busy++;
   return new Promise((res) => {
     const id = ++jobId;
-    waiting.set(id, { res, w, mesh });
-    w.postMessage({ id, mesh });   // copied, not moved: the loaded mesh stays cached here
+    waiting.set(id, { res, w, kind, data });
+    w.postMessage({ id, kind, ...data });   // copied, not moved: a loaded mesh stays cached here
   });
+}
+// a part's mesh (null: not in LDraw); throws if it could not be loaded at all
+const partCache = new Map();
+function loadPart(id) {
+  if (!partCache.has(id)) partCache.set(id, inWorker('load', { part: id }).then((r) => { if (r?.error) { partCache.delete(id); throw new Error(r.error); } return r; }));
+  return partCache.get(id);
 }
 function supported(g) {
   if (!supportCache.has(g.name)) {
     supportCache.set(g.name, verified().then(async (v) => {
-      const s = v[g.name] === 'plain' ? { mesh: g.mesh, note: 'prints as is (checked in Bambu Studio)', before: 0, after: 0, unserved: 0 } : await checkInWorker(g.mesh);
+      const s = v[g.name] === 'plain' ? { mesh: g.mesh, note: 'prints as is (checked in Bambu Studio)', before: 0, after: 0, unserved: 0 } : await inWorker('support', { mesh: g.mesh });
       return { name: g.name, mesh: s.mesh, support: s };
     }));
   }
@@ -189,9 +196,10 @@ async function build() {
       while (queue.length) {
         const [l, i] = queue.shift();
         setRow(i, 'wait', 'loading');
-        const g = await loadPart(l.ldraw).catch(() => null);
+        let failed = '';
+        const g = await loadPart(l.ldraw).catch((e) => { failed = e.message; return null; });
         l.geom = g && (fins ? await supported(g) : g);
-        if (!g) { setRow(i, 'bad', 'not in LDraw'); missing++; }
+        if (!g) { setRow(i, 'bad', failed ? 'load failed: ' + failed : 'not in LDraw'); missing++; }
         else if (!fins || !l.geom.support || l.geom.support.note === 'prints as is') setRow(i, 'ok', 'ready');
         else setRow(i, l.geom.support.unserved ? 'skip' : 'ok', l.geom.support.note);
         done++; status(`Loading parts ${done} / ${lines.length}`);

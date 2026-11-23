@@ -154,6 +154,15 @@ try {
   check(A.proj.cfg.layer_height === '0.2' && A.proj.cfg.enable_support === '0' && A.proj.scales.join() === '1', 'default settings: 0.2 mm layers, slicer supports off, scale 1');
   await slicedOk(A.file, A.proj, 'number');
 
+  // 3b. a 32 x 32 baseplate (11023-1, part 3811: 295k triangles) must not freeze the page while it loads
+  console.log('-- baseplate set 11023-1');
+  await page.evaluate(() => { window.__longest = 0; });
+  await page.fill('#setnum', '11023-1');
+  const bp = await build();
+  const bpFrozen = await page.evaluate(() => window.__longest);
+  check(/^Done/.test(bp.status) && bp.parts === 1 && bp.missing === 0, 'baseplate set builds (the plate is reported too big for the bed)');
+  check(bpFrozen < 1000, `page stays responsive while loading a baseplate: longest freeze ${Math.round(bpFrozen)} ms (limit 1000)`);
+
   // 4. the same set by name
   console.log(`-- set by name "${SET_NAME}"`);
   await page.fill('#setnum', SET_NAME);
@@ -223,18 +232,18 @@ try {
   await slicedOk(F.file, F.proj, 'fit');
   await page.click('#fitreset');
   check(/Not tested yet/.test(await text('#fitnow')), 'fit reset');
-  // 9. a support worker that fails to load: the build still ends and says so, and the next build gets working workers
+  // 9. a part/support worker that fails to load: the build still ends and says so, and the next build gets working workers
   console.log('-- broken support worker, then a second list');
   const p2 = await ctx.newPage();
   const broken = (route) => route.fulfill({ contentType: 'text/javascript', headers: { 'Cache-Control': 'no-store' }, body: 'throw new Error("test: broken support worker");' });
-  await p2.route('**/supports_worker.js*', broken);
+  await p2.route('**/site_worker.js*', broken);
   await p2.goto(url, { waitUntil: 'load' });
   await p2.click('#tab-list');
   const unfinished = (e) => ({ status: 'did not finish: ' + e.message.split('\n')[0], rows: [] });
   await p2.fill('#listtext', '3001,4,1\n3003,4,1');
   const w1 = await build(p2, 120000).catch(unfinished);
-  check(/^Done/.test(w1.status) && w1.rows.length === 2 && w1.rows.every((r) => /support check failed/.test(r[4])), `broken worker: build ends, rows say why (${w1.rows.map((r) => r[4]).join(' | ') || w1.status})`);
-  await p2.unroute('**/supports_worker.js*', broken);
+  check(/^Done/.test(w1.status) && w1.rows.length === 2 && w1.rows.every((r) => /failed/.test(r[4])), `broken worker: build ends, rows say why (${w1.rows.map((r) => r[4]).join(' | ') || w1.status})`);
+  await p2.unroute('**/site_worker.js*', broken);
   await p2.fill('#listtext', '3020,4,1\n3024,4,1');
   const w2 = await build(p2, 120000).catch(unfinished);
   check(/^Done/.test(w2.status) && w2.rows.length === 2 && !w2.rows.some((r) => /failed/.test(r[4])), `next build after the broken worker gets working ones (${w2.rows.map((r) => r[4]).join(' | ') || w2.status})`);
