@@ -228,6 +228,8 @@ async function build() {
       const items = [];
       for (const l of ls) for (let q = 0; q < l.qty; q++) items.push({ line: l, w: l.geom.mesh.size[0] * scale, h: l.geom.mesh.size[1] * scale });
       const plates = pack(items, bed, gap);
+      // wider than the space beside the no-print corner and taller than the space above it
+      for (const it of plates.oversize) if (!tooBig.includes(it.line)) { tooBig.push(it.line); setRow(lines.indexOf(it.line), 'bad', `too big for a ${bed} mm bed (no-print corner)`); }
       for (let p = 0; p < plates.length; p++) {
         const rgb = ls[0].colour.rgb;
         viewPlates.push({ name: `${colour} ${p + 1}`, rgb, scale, items: plates[p].map((it) => ({ mesh: it.line.geom.mesh, cx: it.cx, cy: it.cy })) });

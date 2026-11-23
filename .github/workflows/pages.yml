@@ -25,6 +25,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Check plate layout (every part on the bed, clear of the no-print corner)
+        run: node audit/test_layout.mjs
       - name: Build set data from Rebrickable's database downloads
         run: python scripts/build_data.py _site/data
       - name: Add the site files
