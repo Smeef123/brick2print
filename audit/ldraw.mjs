@@ -13,7 +13,8 @@ const answers = (url) => fetch(url + 'LDConfig.ldr', { method: 'HEAD', signal: A
 
 export async function useLocalLibrary() {
   let url = `http://127.0.0.1:${PORT}/`;
-  if (!(await answers(url))) {
+  // LDRAW_PRIVATE=1: always serve from this process (parallel jobs: another job's server stalls while it computes)
+  if (process.env.LDRAW_PRIVATE || !(await answers(url))) {
     if (!fs.existsSync(path.join(ROOT, 'LDConfig.ldr'))) throw new Error(`no LDraw library at ${ROOT} (set LDRAW_DIR)`);
     const server = http.createServer((req, res) => {
       const p = path.join(ROOT, decodeURIComponent(new URL(req.url, 'http://x/').pathname));
@@ -26,7 +27,7 @@ export async function useLocalLibrary() {
     // no keep-alive: a part's mesh work can block this thread past the 5 s idle limit, and the client then
     // reuses a socket the server already closed (ECONNRESET: 3958 read as missing after 92438)
     const listen = (port) => new Promise((ok, fail) => server.once('error', fail).listen(port, '127.0.0.1', ok));
-    await listen(PORT).catch(() => listen(0));   // 8767 taken by a busy process: any free port
+    await (process.env.LDRAW_PRIVATE ? listen(0) : listen(PORT).catch(() => listen(0)));   // 8767 taken by a busy process: any free port
     server.unref();
     url = `http://127.0.0.1:${server.address().port}/`;
   }
