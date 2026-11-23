@@ -6,8 +6,9 @@
 // had its second chance or no worker can be made, settled with an error in words (a support check with the part's
 // own shape, never an empty one). Routes: the worker's onerror (script failed to load or threw), onmessageerror
 // (a reply that can't be read), a reply saying the worker can't load its code, a reply the page can't handle, a
-// failed postMessage. A flow that can give up (a build at its deadline) runs its jobs through its own session():
-// session.abandon() settles that session's jobs in words with no second chance, stops the workers holding them
+// failed postMessage. A flow that can give up (a build that stopped making progress) runs its jobs through its own
+// session(): given stallMs, it abandons itself once that long passes with no answer for any of its jobs (a slow
+// device that keeps answering is never cut off). session.abandon() settles that session's jobs in words with no second chance, stops the workers holding them
 // (their other jobs get their one re-send) and refuses that session's later jobs in words. Nothing is closed for
 // anyone else, so no caller has to reopen anything. The pool's size is fixed when it is made; it refills on the
 // next job once every worker has been retired.
@@ -45,6 +46,7 @@ export function createPool(make, size) {
           if (j.tries < 2) send(j); else j.res(failed(j, why));
           return;
         }
+        j.s?.alive();   // an answer is progress: the session's stall timer starts again
         j.res(data.r);
       } catch (e) { retire(w, 'the page could not read its answer (' + e.message + ')'); }
     };
@@ -69,18 +71,25 @@ export function createPool(make, size) {
     /** Resolves with the worker's answer, or an answer in words when no worker could give one; never hangs. */
     run: (kind, data) => run(kind, data),
     /** Jobs that can be given up together: abandon(why) settles every one of them in words now, re-sends none, and
-     *  refuses this session's later jobs in words. Other sessions' jobs and run() are untouched. */
-    session: () => {
-      const s = { closed: '' };
-      return {
+     *  refuses this session's later jobs in words. Other sessions' jobs and run() are untouched. With stallMs, the
+     *  session abandons itself (why) after stallMs with no answer to any of its jobs; onAlive runs on each answer.
+     *  close() stops that timer when the flow ends. */
+    session: ({ stallMs = 0, why = '', onAlive } = {}) => {
+      let timer;
+      const s = { closed: '', alive: () => { if (s.closed || !stallMs) return; clearTimeout(timer); timer = setTimeout(() => api.abandon(why), stallMs); onAlive?.(); } };
+      const api = {
         run: (kind, data) => run(kind, data, s),
+        close: () => clearTimeout(timer),
         abandon: (why) => {
+          clearTimeout(timer);
           s.closed = why;
           const held = new Set();
           for (const [id, j] of [...jobs]) if (j.s === s) { jobs.delete(id); j.w.busy--; held.add(j.w); j.res(failed(j, why)); }
           for (const w of held) retire(w, why);   // stops the stuck work; anyone else's jobs on it get their one re-send
         },
       };
+      s.alive();   // the clock starts with the session
+      return api;
     },
     get size() { return workers.length; },
     get waiting() { return jobs.size; },

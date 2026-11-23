@@ -186,9 +186,11 @@ async function build() {
   const force = pass; pass = { list: false, exact: false };
   const btn = $('go');
   btn.disabled = true; $('dl').hidden = true; $('anyway').hidden = true; lastFile = null;
-  const jobs = pool.session();   // this build's worker jobs: its deadline gives up these, nobody else's
-  setDeadline(Date.now() + 10 * 60 * 1000);   // no library request retries past 10 minutes into a build
-  const giveUp = setTimeout(() => jobs.abandon('the build took longer than 10 minutes'), 10 * 60 * 1000);   // and no worker is waited on past it
+  // A build is given up only when it stops making progress: 10 minutes with no part loaded and no support check back.
+  // Each answer moves both limits on (the worker jobs here, library retries in net.js), so a slow device that keeps
+  // going is never cut off. The session's jobs are this build's alone.
+  const STALL = 10 * 60 * 1000;
+  const jobs = pool.session({ stallMs: STALL, why: 'the build made no progress for 10 minutes', onAlive: () => setDeadline(Date.now() + STALL) });
   try {
     const spares = $('spares').checked;
     const scale = num('scale') / 100, gap = num('gap'), bed = num('bed');
@@ -282,7 +284,7 @@ async function build() {
   } finally {
     btn.disabled = false;
     setDeadline(null);
-    clearTimeout(giveUp);
+    jobs.close();
   }
 }
 

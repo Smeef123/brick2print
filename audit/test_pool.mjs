@@ -90,6 +90,27 @@ check(pool.waiting === 0, `no jobs left waiting (${pool.waiting})`);
 const none = await settled(pool.run('load', { part: 'c' }));
 check(!!none?.v?.error, `a new job when no worker can be made settles in words (${none ? none.v.error : 'still waiting'})`);
 
+// 2d. the build's give-up limit counts time with no progress, not time since the start: a slow session that keeps
+//     answering runs well past the limit; one that stops answering is abandoned, in words, once the limit passes
+pool = createPool(fake, 1);
+let alive = 0;
+const slow = pool.session({ stallMs: 120, why: 'no progress', onAlive: () => alive++ });
+const answers = [];
+for (let k = 0; k < 5; k++) {   // 5 jobs of 80 ms each: 400 ms in all, over three times the limit
+  const p = slow.run('load', { part: 'p' + k });
+  await new Promise((ok) => setTimeout(ok, 80));
+  const w = all.at(-1);
+  answer(w, w.got.at(-1), { name: 'p' + k });
+  answers.push((await settled(p))?.v?.name);
+}
+check(answers.join() === 'p0,p1,p2,p3,p4', `a slow session that keeps answering is not cut off (${answers.join()})`);
+check(alive >= 6, `each answer moves the network deadline on too (${alive} calls, want 6)`);
+const stuck = slow.run('support', { mesh });
+const st = await settled(stuck, 400);
+check(!!st?.v?.note?.startsWith('support check failed: no progress') && all.at(-1).terminated, `a session with no answer for the limit is abandoned in words (${st ? st.v.note || st.v.error : 'still waiting'})`);
+slow.close();
+check(pool.waiting === 0, `no jobs left waiting (${pool.waiting})`);
+
 // 3. a healthy pool answers normally and refills after every worker was retired
 pool = createPool(fake, 2);
 const p3 = pool.run('resolve', { part: '3001' });
