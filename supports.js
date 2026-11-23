@@ -381,7 +381,7 @@ export function posed(mesh, pose) {
  * @returns {{ mesh, pose: string, before: number, after: number, fins: number, pillars: number, unserved: number, note: string }}
  *   before: unsupported mm^2 studs-up; after: what is left once everything is added
  */
-export function autoSupport(mesh) {
+export function autoSupport(mesh, finEngine = computeFins) {   // finEngine: swapped only by audit/test_fins_failure.mjs
   const up = unsupportedArea(mesh);
   if (up.failMm2 < RULES.MIN_FAIL_MM2) return { mesh, pose: 'studs up', before: up.failMm2, after: up.failMm2, fins: 0, pillars: 0, unserved: 0, note: 'prints as is' };
   // Every pose is judged by what is left after its pillars, so turning only wins when
@@ -408,7 +408,7 @@ export function autoSupport(mesh) {
     else if (best.pose !== POSES[0] && Math.abs(c.left.failMm2 - best.left.failMm2) <= 0.5 && c.pillars < best.pillars) best = c;
   }
   const turned = best.pose !== POSES[0] ? `turned ${best.pose.name}` : 'studs up';
-  let m = best.m, fins = 0, pillars = best.pillars, left = best.left;
+  let m = best.m, fins = 0, pillars = best.pillars, left = best.left, finsFailed = '';
   if (!pillars && left.failMm2 < RULES.MIN_FAIL_MM2) return { mesh: m, pose: best.pose.name, before: up.failMm2, after: left.failMm2, fins: 0, pillars: 0, unserved: 0, note: `${turned} so it needs no support` };
 
   // 2. what pillars could not reach (too close to the part's sides): fins from the
@@ -417,15 +417,16 @@ export function autoSupport(mesh) {
     try {
       const soup = new Float64Array(m.tris.length * 3);
       for (let t = 0; t < m.tris.length; t++) for (let a = 0; a < 3; a++) soup[t * 3 + a] = m.verts[m.tris[t] * 3 + a];
-      const res = computeFins(soup, { threshold: 30 });
+      const res = finEngine(soup, { threshold: 30 });
       fins = (res.stats.braces || 0) + (res.stats.props || 0);
       if (fins) { m = append(m, res.triangles, res.offset); left = unsupportedArea(m); } // a bed pad with no fin on it holds nothing up
-    } catch (e) { /* leave it to the report */ }
+    } catch (e) { finsFailed = e.message || String(e); }
   }
   const unserved = left.failMm2 >= RULES.MIN_FAIL_MM2 ? 1 : 0;
   const parts = [turned];
   if (pillars) parts.push(`${pillars} pillar${pillars === 1 ? '' : 's'}`);
   if (fins) parts.push(`${fins} fin${fins === 1 ? '' : 's'}`);
+  if (finsFailed) parts.push(`fins failed: ${finsFailed}`);
   if (left.emptyGap) parts.push('a loose piece the slicer will refuse');
   else if (unserved) parts.push(`${left.failMm2.toFixed(1)} mm² still unsupported`);
   return { mesh: m, pose: best.pose.name, before: Math.min(up.failMm2, EMPTY_GAP_PENALTY), after: left.emptyGap ? left.failMm2 - EMPTY_GAP_PENALTY : left.failMm2, fins, pillars, unserved, note: parts.join(', ') };
