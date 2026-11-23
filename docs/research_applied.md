@@ -176,3 +176,24 @@ Slicing (Bambu Studio CLI, P1S profile written by the site, slicer supports off)
   -3829c01 3963 6126a 64448. 15535 itself was the torn hollow above and now prints as is.
 
 Not tested: a real print and fit test of any of these numbers.
+
+## For the user to decide: the support check flags parts that print fine studs-up
+
+From the 415-part audit (audit/out/results-midair-all.jsonl, 2026-11-22; "clean" = plain studs-up sliced with
+under 0.5 mm2 starting in mid-air, median of up to 3 Bambu Studio CLI slices). Thresholds were not changed.
+
+- 365 parts sliced studs-up. The check flagged 193 (2 mm2 or more unsupported studs-up); 88 of those slice
+  clean plain. It passed 172; the slicer found 0.5 mm2 or more on 6 of them (36083f 0.5, 4265a 1.2, 4286 0.5,
+  4533 0.6, 59443 0.5, 6014b 33.3).
+- On the 88 clean parts the check predicted a median of 18.8 mm2 unsupported (largest real ones: 2479 427,
+  4176 239, 2850a/2850b 216, 59349 206, 95347 204, 4476b 177, 3940b 172, 6134 166, 33121 153, 60581 139 mm2;
+  2371's 8,700 was the wrong part, fixed in 237ad95).
+- What it did with them: 19 were turned onto another side (50950 92818c01pr0002 40244 95347 584 2852 15535
+  47456 92820c01pr0009 11403c01pr0106 92820c01pr0153 2417 47847 3940b 64179 6536 2853 87697 60594), the rest
+  got pillars. 13 came out worse than plain studs-up: 50950 1.3, 92818c01pr0002 6.0, 4476b 1.4, 95347 283.2,
+  2852 10.3, 15535 31.9 (a torn hollow, fixed), 47456 1.4, 92820c01pr0009 5.7, 11403c01pr0106 6.1,
+  92820c01pr0153 5.7, 47847 3.9, 3940b 6.1 mm2, and 2371 (wrong part). decisions.json now prints those plain.
+- So for audited parts the decisions file covers it; for parts outside the audit the check over-flags about
+  half of what it flags (88 of 193), and turning a clean part is the step that does harm (12 of the 19 turned
+  clean parts got worse). Options: raise MIN_FAIL_MM2, widen the bridge or overhang bands, or never turn a
+  part whose studs-up layers have no mid-air start (islandMm2 = 0). Each needs a new audit.
