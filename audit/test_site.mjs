@@ -91,14 +91,14 @@ try {
   const view = () => page.locator('#viewport canvas').screenshot();
   const differ = (a, b) => Buffer.compare(a, b) !== 0;
 
-  async function build() {
-    const t0 = Date.now();
-    await page.click('#go');
+  async function build(pg = page, limit = 20 * 60000) {
+    const t0 = Date.now(), text = (sel) => pg.textContent(sel).then((t) => t.trim());
+    await pg.click('#go');
     // build() disables the button until it ends
-    await page.waitForFunction(() => !document.getElementById('go').disabled, null, { timeout: 20 * 60000, polling: 500 });
-    const r = { s: (Date.now() - t0) / 1000, status: await text('#status'), tabs: await page.locator('#platetabs button').count(), dl: await page.isVisible('#dl') };
+    await pg.waitForFunction(() => !document.getElementById('go').disabled, null, { timeout: limit, polling: 500 });
+    const r = { s: (Date.now() - t0) / 1000, status: await text('#status'), tabs: await pg.locator('#platetabs button').count(), dl: await pg.isVisible('#dl') };
     for (const k of ['parts', 'unique', 'colours', 'plates', 'missing']) r[k] = +(await text('#s-' + k));
-    r.rows = await page.$$eval('#rows tr', (trs) => trs.map((tr) => [...tr.children].map((td) => td.textContent.trim())));
+    r.rows = await pg.$$eval('#rows tr', (trs) => trs.map((tr) => [...tr.children].map((td) => td.textContent.trim())));
     console.log(`     "${r.status}" in ${r.s.toFixed(1)} s: ${r.parts} pieces, ${r.unique} unique, ${r.colours} colours, ${r.plates} plates, ${r.tabs} tabs, ${r.missing} missing`);
     return r;
   }
@@ -223,6 +223,23 @@ try {
   await slicedOk(F.file, F.proj, 'fit');
   await page.click('#fitreset');
   check(/Not tested yet/.test(await text('#fitnow')), 'fit reset');
+  // 9. a support worker that fails to load: the build still ends and says so, and the next build gets working workers
+  console.log('-- broken support worker, then a second list');
+  const p2 = await ctx.newPage();
+  const broken = (route) => route.fulfill({ contentType: 'text/javascript', headers: { 'Cache-Control': 'no-store' }, body: 'throw new Error("test: broken support worker");' });
+  await p2.route('**/supports_worker.js*', broken);
+  await p2.goto(url, { waitUntil: 'load' });
+  await p2.click('#tab-list');
+  const unfinished = (e) => ({ status: 'did not finish: ' + e.message.split('\n')[0], rows: [] });
+  await p2.fill('#listtext', '3001,4,1\n3003,4,1');
+  const w1 = await build(p2, 120000).catch(unfinished);
+  check(/^Done/.test(w1.status) && w1.rows.length === 2 && w1.rows.every((r) => /support check failed/.test(r[4])), `broken worker: build ends, rows say why (${w1.rows.map((r) => r[4]).join(' | ') || w1.status})`);
+  await p2.unroute('**/supports_worker.js*', broken);
+  await p2.fill('#listtext', '3020,4,1\n3024,4,1');
+  const w2 = await build(p2, 120000).catch(unfinished);
+  check(/^Done/.test(w2.status) && w2.rows.length === 2 && !w2.rows.some((r) => /failed/.test(r[4])), `next build after the broken worker gets working ones (${w2.rows.map((r) => r[4]).join(' | ') || w2.status})`);
+  await p2.close();
+
   // phone width: no sideways scrolling
   await page.setViewportSize({ width: 390, height: 844 });
   await page.waitForTimeout(300);

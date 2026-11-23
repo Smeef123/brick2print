@@ -112,7 +112,11 @@ function checkInWorker(mesh) {
       const w = new Worker('supports_worker.js', { type: 'module' });
       w.busy = 0;
       w.onmessage = ({ data }) => { w.busy--; waiting.get(data.id).res(data.s); waiting.delete(data.id); };
-      w.onerror = (e) => { e.preventDefault(); for (const [id, j] of waiting) if (j.w === w) { j.res({ mesh: j.mesh, note: 'support check failed: ' + (e.message || 'worker error'), unserved: 1 }); waiting.delete(id); } w.busy = 0; };
+      // a worker that failed to load or crashed leaves the pool (the next check makes a new pool if none is left)
+      w.onerror = (e) => {
+        e.preventDefault(); w.terminate(); if (pool.includes(w)) pool.splice(pool.indexOf(w), 1);
+        for (const [id, j] of waiting) if (j.w === w) { j.res({ mesh: j.mesh, note: 'support check failed: ' + (e.message || 'worker error'), unserved: 1 }); waiting.delete(id); }
+      };
       pool.push(w);
     }
   }
