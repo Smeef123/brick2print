@@ -22,16 +22,19 @@ const it = (g, cx, cy) => ({ key: g.name, label: g.name, mesh: g.mesh, cx, cy })
 // came out with every stud and tube piled up mid-part. Stud tops span (studs - 1) x 8 + 5.0 mm; tubes cross
 // the plate hollow 1.9 mm up.
 let geomOk = true;
-for (const [id, nx, ny] of [['3958', 6, 6], ['92438', 16, 8], ['3020', 4, 2]]) {
+// Nothing may stay at LDraw's old 1.6 mm ceiling once the hollow is 2.2 deep: 3068b's tube hole and 15535's rim
+// ended 0.02 mm off the ceiling's edge and were left there, tearing the mesh.
+for (const [id, nx, ny] of [['3958', 6, 6], ['92438', 16, 8], ['3020', 4, 2], ['3068b', 0, 0], ['15535', 0, 0]]) {
   const { verts: v, tris: t } = (await loadPart(id)).mesh;
-  let top = -Infinity, x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity, cross = 0;
+  let top = -Infinity, x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity, cross = 0, left = 0;
+  for (let k = 2; k < v.length; k += 3) if (Math.abs(v[k] - 1.6) < 0.01) left++;
   for (let k = 2; k < v.length; k += 3) top = Math.max(top, v[k]);
   for (let k = 0; k < v.length; k += 3) if (v[k + 2] > top - 1e-3) { x0 = Math.min(x0, v[k]); x1 = Math.max(x1, v[k]); y0 = Math.min(y0, v[k + 1]); y1 = Math.max(y1, v[k + 1]); }
   for (let k = 0; k < t.length; k += 3) { const z = [0, 1, 2].map((q) => v[t[k + q] * 3 + 2]); if (Math.min(...z) < 1.9 && Math.max(...z) > 1.9) cross++; }
-  const want = [(nx - 1) * 8 + 5, (ny - 1) * 8 + 5], got = [x1 - x0, y1 - y0], tubes = cross > 500;
-  const good = Math.abs(got[0] - want[0]) < 0.05 && Math.abs(got[1] - want[1]) < 0.05 && tubes;
+  const want = [(nx - 1) * 8 + 5, (ny - 1) * 8 + 5], got = [x1 - x0, y1 - y0], tubes = (!nx || cross > 300) && !left;   // tile-like parts here have no stud grid to check
+  const good = (!nx || (Math.abs(got[0] - want[0]) < 0.05 && Math.abs(got[1] - want[1]) < 0.05)) && tubes;
   if (!good) geomOk = false;
-  console.log(`${id}: stud tops span ${got.map((g) => g.toFixed(2)).join(' x ')} mm (want ${want.join(' x ')}), ${cross} faces cross the hollow at 1.9 mm ${good ? 'OK' : 'WRONG'}`);
+  console.log(`${id}: stud tops span ${got.map((g) => g.toFixed(2)).join(' x ')} mm (want ${want.join(' x ')}), ${cross} faces cross the hollow at 1.9 mm, ${left} vertices left at 1.6 mm ${good ? 'OK' : 'WRONG'}`);
 }
 const plates = [
   { name: 'Red 1', filament: 1, items: [it(b, 60, 60), it(b, 120, 60), it(p, 60, 120)] },

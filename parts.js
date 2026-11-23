@@ -249,6 +249,15 @@ function printFit(verts, tris) {
     const l1 = ((b[1] - c[1]) * (x - c[0]) + (c[0] - b[0]) * (y - c[1])) / d, l2 = ((c[1] - a[1]) * (x - c[0]) + (a[0] - c[0]) * (y - c[1])) / d;
     return l1 > -1e-6 && l2 > -1e-6 && l1 + l2 < 1 + 1e-6;
   };
+  // Walls meeting a ceiling often end on its edge without sharing its vertices (LDraw's rings and discs are
+  // cut differently: 15535's rim tops sit 0.02 mm off the ceiling's edge). Those within JOIN mm move too;
+  // left behind, they tore a 0.6 mm gap that sliced as 31.9 mm2 in mid-air once the part was turned over.
+  const JOIN = 0.05;
+  const nearEdge = (t, x, y) => [0, 1, 2].some((k) => {
+    const a = t.p[k], b = t.p[(k + 1) % 3], dx = b[0] - a[0], dy = b[1] - a[1], l2 = dx * dx + dy * dy;
+    const u = l2 ? Math.max(0, Math.min(1, ((x - a[0]) * dx + (y - a[1]) * dy) / l2)) : 0;
+    return Math.hypot(a[0] + u * dx - x, a[1] + u * dy - y) <= JOIN;
+  });
   const atHeight = new Map();   // height (0.001 mm) -> vertex indices
   if (ceilings.length) for (let i = 0; i < verts.length / 3; i++) {
     const k = Math.round(verts[3 * i + 2] * 1000);
@@ -258,7 +267,7 @@ function printFit(verts, tris) {
     // every vertex at the ceiling's height over it: the ceiling, the tops of walls, tubes and pins
     for (const i of atHeight.get(Math.round(t.c[2] * 1000)) || []) {
       const x = verts[3 * i], y = verts[3 * i + 1];
-      if (x >= t.x0 - 1e-3 && x <= t.x1 + 1e-3 && y >= t.y0 - 1e-3 && y <= t.y1 + 1e-3 && inTri(t, x, y)) shift(i, 2, HOLLOW_GROW);
+      if (x >= t.x0 - JOIN && x <= t.x1 + JOIN && y >= t.y0 - JOIN && y <= t.y1 + JOIN && (inTri(t, x, y) || nearEdge(t, x, y))) shift(i, 2, HOLLOW_GROW);
     }
   }
   for (const [i, m] of move) for (let k = 0; k < 3; k++) verts[3 * i + k] += m[k];
