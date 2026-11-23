@@ -223,3 +223,41 @@ by hand except 64782, 99780 and 15535):
   loaded) mm2, against 337, 973, 8, 21, 461, 11, 439, 89, 65, 1352, 469, 86 studs up. A braced tall pose (the
   Support Fins engine already makes braces) or a lower MAX_SLENDER limit is the candidate; both change the
   rule and need a new audit and the user's decision. Not changed.
+
+## Rule options tried on local branches (2026-11-23, for the user to decide)
+
+Each option is a commit on its own local branch (not merged, not pushed): `try/no-turn-when-clean` (never
+turn a part whose studs-up layers start nothing in mid-air), `try/tall-braced` (turned poses taller
+than 2.5x their footprint allowed for parts that need help, with Support Fins' own sway braces, `sway.on`),
+`try/small-islands` (pillars take in 1.5 mm of underside around failing cells instead of 0.75 mm; the 2 mm2
+minimum unchanged). Main is 853d88e with decisions.json applied the same way on every branch.
+
+How measured: main's full 415-part audit (`audit/run.mjs`, 1 slicer, 1.5 GB slicer cap, 180 s per slice; 362
+parts sliced). Then every part whose decision changed on a branch had its shipped plate sliced 3 times on both
+main and the branch (median; `audit/out/perf/onlyon.mjs`); unchanged parts keep main's result. Set 10696: every
+plate sliced on main, plates whose contents changed sliced 3 times on both sides. Set 11926: build time in
+headless Chrome, median of 3 builds, measured while a slicer ran (noisy, +-2 s).
+
+| | main | no-turn-when-clean | tall-braced | small-islands |
+|---|---|---|---|---|
+| Parts with a changed decision | - | 6 | 41 | 93 |
+| Parts with zero mid-air (of 362) | 286 | 286 (main 286) | 293 (main 286) | 286 (main 287) |
+| Changed parts worse / better | - | 1 / 0 | 4 / 11 | 10 / 5 |
+| Total mid-air, all parts, mm2 | 1,591.0 | 1,604.1 (main 1,591.0) | 1,659.2 (main 1,593.9) | 1,774.0 (main 1,599.9) |
+| Set 10696 clean plates of 35 | 26 | 26 (main 26) | 26 (main 27) | 27 (main 27) |
+| Set 10696 mid-air, mm2 | 1,554.9 | 1,792.6 (main 1,570.1) | 1,591.6 (main 1,568.9) | 676.0 (main 1,384.2) |
+| Set 10696 print time, min | 2,175 | 2,250 | 2,183 | 2,216 |
+| Set 11926 build, s | 6.8 | 6.1 | 9.2 | 4.9 |
+
+"(main x)" is main with the same parts or plates re-sliced 3 times, the fair comparison. Worse/better: more than
+0.5 mm2 and 15% apart.
+
+- no-turn-when-clean: 4 of its 6 changed parts already print plain through decisions.json, so it changes little
+  for audited parts; 87697 got worse (0 -> 13.3 mm2), and set 10696's black plate 8 went 108.6 -> 331.1. Its
+  value is for parts outside the audit, which this test can't show.
+- tall-braced: 11 parts better (90981 47.5 -> 0.6, 30115 110.5 -> 12.6, 32034 11.4 -> 0, 2421 9.7 -> 0,
+  11946 7 -> 0), 4 worse (6007 4.9 -> 96.8, 30492 131.6 -> 289.2, 30031 10.6 -> 13.3, 59349 0 -> 0.8). The two
+  Technic panels it was aimed at (64782, 15458) print plain through decisions.json, so they didn't change here.
+  Builds are slower (braces).
+- small-islands: worse on audited parts (10 worse, 5 better, +174 mm2), but set 10696's light grey plate 3 went
+  1,166 -> 504.9 mm2 (that plate's own 3 slices on main spread 1,067.6-1,354.0).
