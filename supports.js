@@ -146,15 +146,14 @@ export function unsupportedArea(mesh) {
     failing.push(isl[c], isl[c + 1], isl[c + 2]); under.push(isl[c], isl[c + 1], isl[c + 2]);
   }
   // islandMm2: the part that starts in mid-air (a print failure, not just a rougher underside)
-  return { failMm2: fail * g * g + (isl.emptyGap ? EMPTY_GAP_PENALTY : 0), islandMm2: islandCells * g * g, cells: cells.length / 3, failCells: fail, failing, under, emptyGap: isl.emptyGap, layerCells: isl.layerCells };
+  return { failMm2: fail * g * g, islandMm2: islandCells * g * g, cells: cells.length / 3, failCells: fail, failing, under };
 }
 const MAX_SLENDER = 2.5; // height : narrowest footprint side, for a turned part
-const EMPTY_GAP_PENALTY = 1e6; // a pose with a layer of nothing between solid layers can't be sliced at all
 
 // Slice the part at each layer's mid-height (LAYER_MM steps), fill each section
 // (even-odd scanlines on a FINE_MM grid) and report the cells of every region that
 // overlaps nothing in the layer below: [x, y, z] at the region's underside.
-const LAYER_MM = 0.2, FINE_MM = 0.1, MIN_ISLAND_CELLS = 4, MIN_LAYER_MM2 = 0.0, ISLAND_JOIN_CELLS = 12; // 1.2 mm: about three line widths, enough for hole roofs split by open meshes
+const LAYER_MM = 0.2, FINE_MM = 0.1, MIN_ISLAND_CELLS = 4, ISLAND_JOIN_CELLS = 12; // 1.2 mm: about three line widths, enough for hole roofs split by open meshes
 const STEP4 = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 function islandStarts(verts, tris) {
   let min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
@@ -162,8 +161,7 @@ function islandStarts(verts, tris) {
   const f = FINE_MM, x0 = min[0] - f, y0 = min[1] - f;
   const W = Math.ceil((max[0] - x0) / f) + 2, H = Math.ceil((max[1] - y0) / f) + 2;
   const nt = tris.length / 3, out = [];
-  let prev = null, seenSolid = false, emptyAfterSolid = false;
-  out.emptyGap = false;   // a layer with nothing in it between solid layers: the slicer refuses that
+  let prev = null;
   for (let z = LAYER_MM / 2; z < max[2]; z += LAYER_MM) {
     // segments of this section
     const seg = [];
@@ -200,11 +198,6 @@ function islandStarts(verts, tris) {
         for (let i = i0; i <= i1; i++) occ[j * W + i] = 1;
       }
     }
-    let cellsHere = 0;
-    for (let c = 0; c < occ.length; c++) cellsHere += occ[c];
-    (out.layerCells ??= []).push(cellsHere);
-    const any = cellsHere * f * f >= MIN_LAYER_MM2;   // less than this, the slicer drops the layer
-    if (any) { if (emptyAfterSolid) out.emptyGap = true; seenSolid = true; } else if (seenSolid) emptyAfterSolid = true;
     if (prev && z > LAYER_MM) {
       const lab = new Int32Array(W * H);
       let id = 0;
@@ -427,9 +420,8 @@ export function autoSupport(mesh, finEngine = computeFins) {   // finEngine: swa
   if (pillars) parts.push(`${pillars} pillar${pillars === 1 ? '' : 's'}`);
   if (fins) parts.push(`${fins} fin${fins === 1 ? '' : 's'}`);
   if (finsFailed) parts.push(`fins failed: ${finsFailed}`);
-  if (left.emptyGap) parts.push('a loose piece the slicer will refuse');
-  else if (unserved) parts.push(`${left.failMm2.toFixed(1)} mm² still unsupported`);
-  return { mesh: m, pose: best.pose.name, before: Math.min(up.failMm2, EMPTY_GAP_PENALTY), after: left.emptyGap ? left.failMm2 - EMPTY_GAP_PENALTY : left.failMm2, fins, pillars, unserved, note: parts.join(', ') };
+  if (unserved) parts.push(`${left.failMm2.toFixed(1)} mm² still unsupported`);
+  return { mesh: m, pose: best.pose.name, before: up.failMm2, after: left.failMm2, fins, pillars, unserved, note: parts.join(', ') };
 }
 
 // fin_world = fin_seated - offset; append to the part's mesh (the slicer unions them)
