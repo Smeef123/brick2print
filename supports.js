@@ -6,8 +6,8 @@
 // overhang that steps out a little each layer). Everything else needs support.
 //
 // Bands are the P-series PLA planning bands (bambu MCP fdm_capability): conventional
-// bridges up to about 20 mm are ordinary; slopes up to about 70 degrees from vertical
-// print unsupported. A slope of angle a from vertical steps out h*tan(a) per layer
+// bridges up to about 20 mm are ordinary and 20-50 mm a real option (BRIDGE_MM is 40: see RULES);
+// slopes up to about 70 degrees from vertical print unsupported. A slope of angle a from vertical steps out h*tan(a) per layer
 // of height h, so testing "material within CANTILEVER_MM, PROBE_MM below" puts the
 // limit at atan(CANTILEVER_MM / PROBE_MM) = atan(1.0 / 0.3) ~ 73 degrees.
 //

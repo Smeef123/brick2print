@@ -15,7 +15,7 @@ Turn a brick set's parts list into ready-to-print 3MF plates, one batch per colo
 
 Print with slicer supports **off**. Set2Print decides supports by geometry:
 
-- A point on a part's underside prints as is if it lies on a straight path of at most **20 mm** between two pieces of material 0.3 mm below it (a bridge), or within **1 mm** of material below it (an overhang stepping out per layer, which allows slopes up to about 73° from vertical). These are the ordinary bands for PLA on a Bambu P-series printer.
+- A point on a part's underside prints as is if it lies on a straight path of at most **40 mm** between two pieces of material 0.3 mm below it (a bridge), or within **1 mm** of material below it (an overhang stepping out per layer, which allows slopes up to about 73° from vertical). For PLA on a Bambu P-series printer 20 mm bridges are ordinary and 20-50 mm a real option (50 mm printed clean on a P2S); the audit found parts that printed fine studs-up with bridges past 20 mm.
 - The part is also sliced into 0.2 mm layers; any region that starts in mid-air (overlaps nothing in the layer below) fails too, however close it sits to a wall.
 - Studs-up is kept unless turning leaves less than half the unsupported area it does (after pillars), and a turned part must stand steadily (no taller than 2.5× its narrowest footprint side).
 - Every spot that still fails gets a **breakaway pillar**: a column from the plate (or the part below) up to 0.2 mm short of the underside, kept 0.3 mm clear of the part's sides and at least 0.8 mm wide. This covers flat and curved undersides such as sideways studs.
