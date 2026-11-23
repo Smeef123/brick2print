@@ -17,7 +17,8 @@ const parts = fetch('parts.js').then((r) => r.text()).then((src) => {
 onmessage = async ({ data: { id, kind, part, name, mesh } }) => {
   let r;
   try {
-    if (kind === 'load') r = await (await parts).loadPart(part, name);
+    if (kind === 'resolve') r = await (await parts).resolvePart(part, name);
+    else if (kind === 'load') { const P = await parts; r = await P.loadPart(part); P.dropMeshes(); }   // the page keeps the mesh
     else r = autoSupport(mesh);
   } catch (e) {
     r = kind === 'load' ? { error: e.message } : { mesh, note: 'support check failed: ' + e.message, unserved: 1 };

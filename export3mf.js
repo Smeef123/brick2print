@@ -1,15 +1,19 @@
 // 3MF / STL writers and the Lego print settings. Shared by the site (app.js) and the audit (audit/).
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
+const f = (n) => (Math.round(n * 1e4) / 1e4).toString();
+const MODEL_HEAD = '<?xml version="1.0" encoding="UTF-8"?>\n<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">\n';
+// one <object> of a 3MF model
+function objectXml(id, label, mesh) {
+  const vs = [], ts = [];
+  for (let k = 0; k < mesh.verts.length; k += 3) vs.push(`<vertex x="${f(mesh.verts[k])}" y="${f(mesh.verts[k + 1])}" z="${f(mesh.verts[k + 2])}"/>`);
+  for (let k = 0; k < mesh.tris.length; k += 3) ts.push(`<triangle v1="${mesh.tris[k]}" v2="${mesh.tris[k + 1]}" v3="${mesh.tris[k + 2]}"/>`);
+  return `<object id="${id}" name="${esc(label)}" type="model"><mesh><vertices>${vs.join('')}</vertices><triangles>${ts.join('')}</triangles></mesh></object>\n`;
+}
+
 export function model3mf(objects, items, scale) {
-  const f = (n) => (Math.round(n * 1e4) / 1e4).toString();
-  let s = '<?xml version="1.0" encoding="UTF-8"?>\n<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">\n<resources>\n';
-  objects.forEach((o, i) => {
-    const vs = [], ts = [];
-    for (let k = 0; k < o.mesh.verts.length; k += 3) vs.push(`<vertex x="${f(o.mesh.verts[k])}" y="${f(o.mesh.verts[k + 1])}" z="${f(o.mesh.verts[k + 2])}"/>`);
-    for (let k = 0; k < o.mesh.tris.length; k += 3) ts.push(`<triangle v1="${o.mesh.tris[k]}" v2="${o.mesh.tris[k + 1]}" v3="${o.mesh.tris[k + 2]}"/>`);
-    s += `<object id="${i + 1}" name="${esc(o.label)}" type="model"><mesh><vertices>${vs.join('')}</vertices><triangles>${ts.join('')}</triangles></mesh></object>\n`;
-  });
+  let s = MODEL_HEAD + '<resources>\n';
+  objects.forEach((o, i) => { s += objectXml(i + 1, o.label, o.mesh); });
   s += '</resources>\n<build>\n';
   for (const it of items) s += `<item objectid="${it.obj}" transform="${f(scale)} 0 0 0 ${f(scale)} 0 0 0 ${f(scale)} ${f(it.cx)} ${f(it.cy)} 0"/>\n`;
   return s + '</build>\n</model>\n';
@@ -78,7 +82,7 @@ export function multiFilamentSettings(base, filamentKeys, layer, rgbs, fit = { c
  * Writes one .3mf Bambu Studio opens as a project: every plate, each object on its plate's filament.
  */
 export async function projectFile(JSZip, plates, settings, bed = 256, scale = 1) {
-  const f = (v) => (Math.round(v * 1e4) / 1e4).toString();
+
   const objects = [], objIndex = new Map(), items = [], perPlate = plates.map(() => []), instances = new Map();
   const cols = plateGrid(plates.length), stride = bed * 1.2;
   plates.forEach((pl, k) => {
@@ -92,16 +96,13 @@ export async function projectFile(JSZip, plates, settings, bed = 256, scale = 1)
       perPlate[k].push({ obj, inst });
     }
   });
-  let model = '<?xml version="1.0" encoding="UTF-8"?>\n<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">\n<metadata name="Application">BambuStudio-02.09.01.70</metadata>\n<resources>\n';
-  objects.forEach((o, i) => {
-    const vs = [], ts = [];
-    for (let k = 0; k < o.mesh.verts.length; k += 3) vs.push(`<vertex x="${f(o.mesh.verts[k])}" y="${f(o.mesh.verts[k + 1])}" z="${f(o.mesh.verts[k + 2])}"/>`);
-    for (let k = 0; k < o.mesh.tris.length; k += 3) ts.push(`<triangle v1="${o.mesh.tris[k]}" v2="${o.mesh.tris[k + 1]}" v3="${o.mesh.tris[k + 2]}"/>`);
-    model += `<object id="${i + 1}" name="${esc(o.label)}" type="model"><mesh><vertices>${vs.join('')}</vertices><triangles>${ts.join('')}</triangles></mesh></object>\n`;
-  });
-  model += '</resources>\n<build>\n';
-  for (const it of items) model += `<item objectid="${it.obj}" transform="${f(scale)} 0 0 0 ${f(scale)} 0 0 0 ${f(scale)} ${f(it.x)} ${f(it.y)} 0"/>\n`;
-  model += '</build>\n</model>\n';
+  // The model is built as bytes, one object at a time: one string holding a big set's every vertex runs to
+  // hundreds of MB (2 bytes a character, and each += copies it).
+  const enc = new TextEncoder(), chunks = [enc.encode(MODEL_HEAD + '<metadata name="Application">BambuStudio-02.09.01.70</metadata>\n<resources>\n')];
+  objects.forEach((o, i) => chunks.push(enc.encode(objectXml(i + 1, o.label, o.mesh))));
+  chunks.push(enc.encode('</resources>\n<build>\n' + items.map((it) => `<item objectid="${it.obj}" transform="${f(scale)} 0 0 0 ${f(scale)} 0 0 0 ${f(scale)} ${f(it.x)} ${f(it.y)} 0"/>\n`).join('') + '</build>\n</model>\n'));
+  const model = new Uint8Array(chunks.reduce((a, c) => a + c.length, 0));
+  chunks.reduce((at, c) => { model.set(c, at); return at + c.length; }, 0);
   let ms = '<?xml version="1.0" encoding="UTF-8"?>\n<config>\n';
   objects.forEach((o, i) => {
     ms += `  <object id="${i + 1}">\n    <metadata key="name" value="${esc(o.label)}"/>\n    <metadata key="extruder" value="${o.filament}"/>\n  </object>\n`;

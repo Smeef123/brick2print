@@ -130,7 +130,7 @@ function inWorker(kind, data) {
       w.onerror = (e) => {
         e.preventDefault(); w.terminate(); if (pool.includes(w)) pool.splice(pool.indexOf(w), 1);
         const why = e.message || 'worker error';
-        for (const [id, j] of waiting) if (j.w === w) { j.res(j.kind === 'load' ? { error: why } : { mesh: j.data.mesh, note: 'support check failed: ' + why, unserved: 1 }); waiting.delete(id); }
+        for (const [id, j] of waiting) if (j.w === w) { j.res(j.kind !== 'support' ? { error: why } : { mesh: j.data.mesh, note: 'support check failed: ' + why, unserved: 1 }); waiting.delete(id); }
       };
       pool.push(w);
     }
@@ -145,8 +145,21 @@ function inWorker(kind, data) {
 }
 // a part's mesh (null: not in LDraw); throws if it could not be loaded at all
 const partCache = new Map();
+// Each id is resolved to its LDraw file names first, so printed variants of one shape (3069bpr0001, 3069bpr0002 ->
+// 3069b) load once; the meshes live only here, the workers drop theirs after each load.
+const shapeCache = new Map();
+const job = (kind, data) => inWorker(kind, data).then((r) => { if (r?.error) throw new Error(r.error); return r; });
+function loadShape(file) {
+  if (!shapeCache.has(file)) shapeCache.set(file, job('load', { part: file }).catch((e) => { shapeCache.delete(file); throw e; }));
+  return shapeCache.get(file);
+}
 function loadPart(id, name = '') {
-  if (!partCache.has(id)) partCache.set(id, inWorker('load', { part: id, name }).then((r) => { if (r?.error) { partCache.delete(id); throw new Error(r.error); } return r; }));
+  if (!partCache.has(id)) {
+    partCache.set(id, job('resolve', { part: id, name }).then(async (files) => {
+      for (const f of files) { const g = await loadShape(f); if (g) return g; }   // null: that file has no faces, try the next
+      return null;
+    }).catch((e) => { partCache.delete(id); throw e; }));
+  }
   return partCache.get(id);
 }
 function supported(g) {

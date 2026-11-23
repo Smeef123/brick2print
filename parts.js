@@ -123,16 +123,28 @@ async function buildShape(name) {
 // numbers name unrelated LEGO parts there (2361Mx -> 2361, a 32x32 road baseplate; 2371 -> a boat hull).
 const OTHER_SYSTEM = /^modulex\b/i;
 /** name: the parts list's name for the part, when known (built-in sets have one). */
+/** The LDraw file names a parts-list id may stand for, in the order loadPart tries them (only those the library has). */
+export async function resolvePart(id, name = '') {
+  if (OTHER_SYSTEM.test(name)) return [];
+  const found = [];
+  for (const n of candidates(id)) {
+    const r = await fetch(LIB + 'parts/' + n + '.dat', { method: 'HEAD' });   // a network error throws
+    if (r.status === 404) continue;
+    if (!r.ok) throw new Error(`the parts library answered ${r.status} for ${n}`);
+    found.push(n);
+  }
+  return found;
+}
+/** Forget every mesh built so far (the site's worker hands each mesh to the page, which keeps it). */
+export function dropMeshes() { geomCache.clear(); shapeCache.clear(); }
+
 export async function loadPart(id, name = '') {
   if (OTHER_SYSTEM.test(name)) return null;
   if (geomCache.has(id)) return geomCache.get(id);
   const p = (async () => {
     if (!materialsReady) materialsReady = loader.preloadMaterials(LIB + 'LDConfig.ldr').catch(() => {});
     await materialsReady;
-    for (const name of candidates(id)) {
-      const r = await fetch(LIB + 'parts/' + name + '.dat', { method: 'HEAD' });   // a network error throws
-      if (r.status === 404) continue;
-      if (!r.ok) throw new Error(`the parts library answered ${r.status} for ${name}`);
+    for (const name of await resolvePart(id)) {
       // printed variants share one LDraw shape (3069bpr0001, 3069bpr0002 -> 3069b): build it once
       if (!shapeCache.has(name)) {
         const s = buildShape(name);
