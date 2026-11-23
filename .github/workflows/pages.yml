@@ -74,6 +74,7 @@ jobs:
           node audit/test_supports_big.mjs
           node audit/test_fins_failure.mjs
           node audit/test_site.mjs local
+          node audit/test_site.mjs local phone   # 390 x 844 touch phone, CPU 4x slower: set 11926 only
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site

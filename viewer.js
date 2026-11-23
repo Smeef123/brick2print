@@ -73,11 +73,17 @@ function geometryOf(mesh) {
 }
 
 /** Show one plate: items [{ mesh, cx, cy }] in bed coordinates (0..size), scale, colour rgb hex. */
+// Only the plate on screen keeps GPU buffers: a big set's other plates would hold every part's copy (a phone's budget).
+let shown = new Set(), shownMat = null;
 export function showPlate(plate) {
   parts.clear();
   redraw();
+  const next = new Set(plate ? plate.items.map((it) => it.mesh) : []);
+  for (const mesh of shown) if (!next.has(mesh)) { geoCache.get(mesh)?.dispose(); geoCache.delete(mesh); }
+  shown = next;
+  shownMat?.dispose(); shownMat = null;
   if (!plate) return;
-  const mat = new THREE.MeshStandardMaterial({ color: new THREE.Color('#' + plate.rgb), roughness: 0.55, metalness: 0, side: THREE.DoubleSide });
+  const mat = shownMat = new THREE.MeshStandardMaterial({ color: new THREE.Color('#' + plate.rgb), roughness: 0.55, metalness: 0, side: THREE.DoubleSide });
   for (const it of plate.items) {
     const m = new THREE.Mesh(geometryOf(it.mesh), mat);
     m.scale.setScalar(plate.scale);

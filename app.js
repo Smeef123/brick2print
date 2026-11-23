@@ -116,13 +116,30 @@ const supportCache = new Map();
 // studs-up (audit/decisions.py): those print plain. Unaudited parts use the geometry rules.
 let verifiedP = null;
 const verified = () => (verifiedP ??= fetch('bambu/decisions.json').then((r) => (r.ok ? r.json() : {})).catch(() => ({})));
+// Memory a phone can give the page: about half of navigator.deviceMemory (Chrome reports it, capped at 8 GB;
+// other browsers don't, and then nothing is refused). Guess, not measured on a phone.
+const memoryForPageMB = () => (navigator.deviceMemory ? Math.round(navigator.deviceMemory * 1024 / 2) : Infinity);
+// The page and its workers (about 250 MB in headless Chrome) plus about 10 bytes per byte of mesh for every object
+// (shape x colour) the project writes: set 11374's 475 objects made the writer's peak 127 MB in Node.
+function projectNeedMB(plates) {
+  const seen = new Set();
+  let bytes = 0;
+  for (const pl of plates) for (const it of pl.items) {
+    const k = it.key + '|' + pl.filament;
+    if (!seen.has(k)) { seen.add(k); bytes += it.mesh.verts.byteLength + it.mesh.tris.byteLength; }
+  }
+  return Math.round(250 + (bytes * 10) / 1048576);
+}
+
 // Loading a part and its support check run in worker threads (site_worker.js): a baseplate takes seconds to
 // load and a big part seconds to minutes to check, which would freeze the page.
 const pool = [], waiting = new Map();
 let jobId = 0;
 function inWorker(kind, data) {
   if (!pool.length) {
-    for (let k = 0; k < Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 2) - 1)); k++) {
+    // one core left for the page; fewer workers when the device has little memory (each holds three.js and a parts loader)
+    const mem = navigator.deviceMemory || 8, n = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 2) - 1, mem <= 2 ? 1 : mem <= 4 ? 2 : 4));
+    for (let k = 0; k < n; k++) {
       const w = new Worker('site_worker.js', { type: 'module', name: document.querySelector('script[type="importmap"]').textContent });   // the worker reads three.js's URLs from it
       w.busy = 0;
       w.onmessage = ({ data }) => { w.busy--; waiting.get(data.id).res(data.r); waiting.delete(data.id); };
@@ -265,6 +282,12 @@ async function build() {
       }
     }
     renderPlateTabs(viewPlates);
+    // Writing the project holds every object's vertices as text: refuse in words rather than let a phone kill the tab.
+    const needMB = projectNeedMB(projectPlates), haveMB = memoryForPageMB();
+    if (projectPlates.length && needMB > haveMB) {
+      status(`This set is too big for this device: writing it needs about ${needMB} MB of memory and this browser gives a page about ${haveMB} MB. The plates are shown above; build the download on a computer, or paste part of the list.`);
+      return;
+    }
     if (projectPlates.length) {
       status('Writing the Bambu Studio project…');
       lastFile = new Blob([await projectFile(JSZip, projectPlates, await projectSettings($('layer').value, colourRgbs, bed), bed, scale)], { type: 'model/3mf' });

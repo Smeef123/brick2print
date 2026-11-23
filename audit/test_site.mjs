@@ -23,8 +23,8 @@ const CHROME = process.env.CHROME || 'C:/Program Files/Google/Chrome/Application
 const BAMBU = process.env.BAMBU || 'C:/Program Files/Bambu Studio/bambu-studio.exe';
 const SLICE = fs.existsSync(BAMBU);
 const SET = '11926-1', SET_NAME = 'Parts for Wooden Minifigure';   // 29 pieces, 12 unique parts, all in LDraw
-const [where = 'local'] = process.argv.slice(2);
-const OUT = path.join(HERE, 'out', 'site-test', where === 'local' ? 'local' : 'live');
+const [where = 'local', MODE = 'desktop'] = process.argv.slice(2);   // MODE phone: the phone checks only
+const OUT = path.join(HERE, 'out', 'site-test', (where === 'local' ? 'local' : 'live') + (MODE === 'phone' ? '-phone' : ''));
 fs.rmSync(OUT, { recursive: true, force: true }); fs.mkdirSync(OUT, { recursive: true });
 
 const failures = [];
@@ -85,8 +85,73 @@ async function slicedOk(file, proj, tag) {
 
 const browser = await chromium.launch({ executablePath: CHROME, headless: true, args: (process.env.CHROME_ARGS || '').split(' ').filter(Boolean) });   // CHROME_ARGS=--disable-gpu: like a runner without GPU
 const errors = [];
+// Phone (test_site.mjs <where> phone): 390 x 844, touch, mobile user agent, CPU 4x slower, as a phone would load it.
+// No sideways scrolling, every control at least 44 px to tap (links inside sentences excepted), one finger turns the
+// 3D view and two pinch it, plate tabs leave the view free, set 11926 builds and downloads (10696 too unless
+// QUICK_SETS), and a set too big for the phone's memory is refused in words.
+async function phoneChecks() {
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true, acceptDownloads: true,
+    userAgent: 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36' });
+  const page = await ctx.newPage(), cdp = await ctx.newCDPSession(page);
+  await cdp.send('Emulation.setCPUThrottlingRate', { rate: 4 });
+  page.on('pageerror', (e) => errors.push('phone page: ' + e.message));
+  page.on('crash', () => errors.push('phone tab crashed'));
+  await page.goto(url, { waitUntil: 'load' });
+  await page.waitForFunction(() => /sets, updated/.test(document.getElementById('datainfo').textContent), null, { timeout: 60000 });
+  const layout = () => page.evaluate(() => {
+    const small = [];
+    for (const el of document.querySelectorAll('button, input, select, textarea, a[href]')) {
+      if (!el.checkVisibility() || (el.tagName === 'A' && el.closest('p'))) continue;   // a link inside a sentence is sized by the text
+      const r = (el.closest('label') || el).getBoundingClientRect();
+      if (r.width < 44 || r.height < 44) small.push(`${el.tagName.toLowerCase()}${el.id ? '#' + el.id : ''} "${(el.textContent || el.value || '').trim().slice(0, 14)}" ${Math.round(r.width)}x${Math.round(r.height)}`);
+    }
+    return { overflow: document.documentElement.scrollWidth - innerWidth, small: [...new Set(small)] };
+  });
+  let l = await layout();
+  check(l.overflow <= 0, `phone: no sideways scrolling (${l.overflow} px over)`);
+  check(!l.small.length, `phone: every control at least 44 px to tap (${l.small.length} smaller${l.small.length ? ': ' + l.small.slice(0, 6).join(', ') : ''})`);
+  const touch = (type, pts) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: pts.map(([x, y], i) => ({ x, y, id: i })) });
+  for (const sn of process.env.QUICK_SETS ? ['11926-1'] : ['11926-1', '10696-1']) {
+    await page.fill('#setnum', sn);
+    const t0 = Date.now();
+    await page.click('#go');
+    await page.waitForFunction(() => !document.getElementById('go').disabled, null, { timeout: 30 * 60000, polling: 1000 });
+    const st = (await page.textContent('#status')).trim(), plates = await page.locator('#platetabs button').count();
+    check(/^Done/.test(st) && plates > 0, `phone: set ${sn} builds in ${((Date.now() - t0) / 1000).toFixed(0)} s: "${st}"`);
+    const canvas = page.locator('#viewport canvas');
+    await canvas.scrollIntoViewIfNeeded();
+    const b = await canvas.boundingBox(), cx = b.x + b.width / 2, cy = b.y + b.height / 2;
+    check(await page.evaluate(([x, y]) => document.elementFromPoint(x, y)?.tagName === 'CANVAS', [cx, cy]), `phone: set ${sn}'s ${plates} plate tabs leave the middle of the 3D view free to touch`);
+    const s0 = await canvas.screenshot();
+    await touch('touchStart', [[cx, cy]]); for (let k = 1; k <= 8; k++) await touch('touchMove', [[cx + k * 12, cy + k * 3]]); await touch('touchEnd', []);
+    await page.waitForTimeout(1200);
+    const s1 = await canvas.screenshot();
+    await touch('touchStart', [[cx - 30, cy], [cx + 30, cy]]); for (let k = 1; k <= 8; k++) await touch('touchMove', [[cx - 30 - k * 8, cy], [cx + 30 + k * 8, cy]]); await touch('touchEnd', []);
+    await page.waitForTimeout(1200);
+    const s2 = await canvas.screenshot();
+    check(Buffer.compare(s0, s1) !== 0 && Buffer.compare(s1, s2) !== 0, `phone: one finger turns the 3D view, two fingers zoom it (set ${sn})`);
+    const dl = await Promise.all([page.waitForEvent('download', { timeout: 300000 }), page.click('#dl')]).then(([d]) => d, () => null);
+    check(!!dl, `phone: set ${sn} downloads (${dl ? dl.suggestedFilename() : 'no download'})`);
+  }
+  l = await layout();
+  check(l.overflow <= 0 && !l.small.length, `phone, after building: no sideways scrolling (${l.overflow} px), every control 44 px (${l.small.length} smaller${l.small.length ? ': ' + l.small.slice(0, 4).join(', ') : ''})`);
+  // a phone that says it has little memory: a big set is refused in words, the tab stays alive
+  const small = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  const p3 = await small.newPage();
+  await p3.addInitScript(() => Object.defineProperty(navigator, 'deviceMemory', { get: () => 0.25 }));
+  let crashed = false; p3.on('crash', () => { crashed = true; });
+  await p3.goto(url, { waitUntil: 'load' });
+  await p3.waitForFunction(() => /sets, updated/.test(document.getElementById('datainfo').textContent), null, { timeout: 60000 });
+  const bigSet = process.env.QUICK_SETS ? '11926-1' : '11374-1';   // on the runner the small set, refused all the same at 0.25 GB
+  await p3.fill('#setnum', bigSet); await p3.click('#go');
+  await p3.waitForFunction(() => !document.getElementById('go').disabled, null, { timeout: 30 * 60000, polling: 1000 }).catch(() => {});
+  const st3 = crashed ? 'tab crashed' : (await p3.textContent('#status')).trim();
+  check(/too big for this device/i.test(st3), `phone with 0.25 GB: set ${bigSet} refused in words ("${st3.slice(0, 140)}")`);
+  await small.close(); await ctx.close();
+}
 const unstamped = new Set();   // the publish step adds ?v=<commit> to the site's own files so a visitor never mixes versions
 try {
+  if (MODE === 'phone') await phoneChecks(); else {
   const ctx = await browser.newContext({ acceptDownloads: true, viewport: { width: 1400, height: 900 } });
   const page = await ctx.newPage();
   // LDraw's loader tries each folder (parts/, p/, models/, the root) and expects 404s; the browser's own favicon request is not the page's
@@ -313,6 +378,7 @@ try {
   await page.waitForTimeout(300);
   const wide = await page.evaluate(() => document.documentElement.scrollWidth);
   check(wide <= 390, `phone width 390 px: page is ${wide} px wide`);
+  }
 } catch (e) {
   check(false, 'test stopped: ' + e.message.split('\n')[0]);
 } finally { await browser.close(); }
