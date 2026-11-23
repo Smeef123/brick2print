@@ -373,5 +373,3 @@ drop.ondragover = (e) => { e.preventDefault(); drop.classList.add('over'); };
 drop.ondragleave = () => drop.classList.remove('over');
 drop.ondrop = async (e) => { e.preventDefault(); drop.classList.remove('over'); const f = e.dataTransfer.files[0]; if (f) $('listtext').value = await f.text(); };
 
-// test hook: lets an automated check run the whole pipeline without clicks
-window.set2print = { fromText, loadPart, pack, build, supported, get file() { return lastFile; } };
