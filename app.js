@@ -5,6 +5,13 @@ import { buildBed, showPlate } from './viewer.js';
 import { pack } from './layout.js';
 
 const $ = (id) => document.getElementById(id);
+// a number input's value held to its min and max (shown back in the box); unreadable -> its default
+function num(id) {
+  const el = $(id), v = parseFloat(el.value);
+  const n = Number.isFinite(v) ? Math.min(+el.max, Math.max(+el.min, v)) : +el.defaultValue;
+  if (String(n) !== el.value) el.value = n;
+  return n;
+}
 
 // ---------- small helpers ----------
 const store = {
@@ -71,14 +78,17 @@ function fromText(text, withSpares) {
   const rows = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   if (!rows.length) throw new Error('Paste a parts list first: one "part, colour, quantity" per line.');
   let cols = { part: 0, colour: 1, qty: 2, spare: -1 };
-  const first = rows[0].split(/[,;\t]/).map((s) => s.trim().toLowerCase());
-  if (first.some((h) => /part|color|colour|quantity|qty/.test(h))) {
+  const first = rows[0].split(/[,;\t]/).map((s) => s.trim().replace(/^"|"$/g, '').toLowerCase());
+  // a header row: Rebrickable (Part, Color, Quantity, Is Spare) or BrickLink (Item No, Color, Qty)
+  const bricklink = first.some((h) => /^item ?(no|number|id)$/.test(h));
+  if (first.some((h) => /part|item|colou?r|quantity|qty|amount/.test(h))) {
     cols = {
-      part: first.findIndex((h) => /^part/.test(h)),
+      part: first.findIndex((h) => /^part|^item ?(no|number|id)$/.test(h)),
       colour: first.findIndex((h) => /colou?r/.test(h)),
-      qty: first.findIndex((h) => /quantity|qty/.test(h)),
+      qty: first.findIndex((h) => /quantity|qty|amount/.test(h)),
       spare: first.findIndex((h) => /spare/.test(h)),
     };
+    if (cols.part < 0) throw new Error(`No part column in the header ("${rows[0]}"): name one "Part" or "Item No".`);
     rows.shift();
   }
   const merged = new Map();
@@ -87,8 +97,12 @@ function fromText(text, withSpares) {
     const part = f[cols.part];
     if (!part) continue;
     if (cols.spare >= 0 && /^(true|1|yes)$/i.test(f[cols.spare] || '') && !withSpares) continue;
+    // BrickLink numbers its colours differently from Rebrickable (BrickLink 5 is red, Rebrickable 5 is pink)
+    if (bricklink && cols.colour >= 0 && /^\d+$/.test(f[cols.colour] || '')) throw new Error('This is a BrickLink list with BrickLink colour numbers, which differ from Rebrickable\'s. Use colour names (Red, Light Bluish Gray) or a Rebrickable export.');
     const colour = colourOf(cols.colour >= 0 ? f[cols.colour] : '');
-    const qty = Math.max(1, parseInt(cols.qty >= 0 ? f[cols.qty] : '1', 10) || 1);
+    const q = cols.qty >= 0 && f[cols.qty] !== '' && f[cols.qty] !== undefined ? parseInt(f[cols.qty], 10) : 1;   // no quantity given: one
+    if (!(q > 0)) continue;   // 0, negative or unreadable: nothing to print
+    const qty = q;
     const k = part + '|' + colour.id;
     if (merged.has(k)) merged.get(k).qty += qty;
     else merged.set(k, { part, ldraw: part, name: '', colour, qty });
@@ -171,9 +185,7 @@ async function build() {
   btn.disabled = true; $('dl').hidden = true; lastFile = null;
   try {
     const spares = $('spares').checked;
-    const scale = (parseFloat($('scale').value) || 100) / 100;
-    const gap = parseFloat($('gap').value) || 12;
-    const bed = parseFloat($('bed').value) || 256;
+    const scale = num('scale') / 100, gap = num('gap'), bed = num('bed');
     const fins = $('fins').checked;
     showBed(bed); showPlate(null); $('platetabs').innerHTML = ''; $('viewnote').hidden = false;
     $('rows').innerHTML = '<tr><td colspan="5" class="hint">Parts appear here once you build plates.</td></tr>'; sum({ parts: 0, unique: 0, colours: 0, plates: 0, missing: 0 });   // a failed build must not leave the last one's results
@@ -296,7 +308,7 @@ async function buildFitTest() {
     const [brick, plate] = await Promise.all([loadPart('3001'), loadPart('3020')]);
     if (!brick || !plate) throw new Error('The test parts could not be loaded. Check your connection and try again.');
     const red = colourOf('4');
-    const scale = (parseFloat($('scale').value) || 100) / 100;
+    const scale = num('scale') / 100;
     const objs = [{ label: '3001 Brick 2 x 4 (fit test)', mesh: brick.mesh }, { label: '3020 Plate 2 x 4 (fit test)', mesh: plate.mesh }];
     const items = [{ obj: 1, cx: 108, cy: 128 }, { obj: 2, cx: 148, cy: 128 }];
     const pl = [{ name: 'Fit test', filament: 1, items: items.map((it) => ({ key: objs[it.obj - 1].label, label: objs[it.obj - 1].label, mesh: objs[it.obj - 1].mesh, cx: it.cx, cy: it.cy })) }];
@@ -340,7 +352,7 @@ for (const b of document.querySelectorAll('[data-fit]')) b.onclick = () => repor
 $('fitreset').onclick = () => { store.set('s2p.fit', ''); showFit(); status('Fit adjustments cleared.'); };
 showFit();
 function showBed(size) { buildBed(size); $('viewnote').textContent = `Empty plate (${size} × ${size} mm). Find a set or paste a list, then Build plates.`; }
-$('bed').onchange = () => showBed(parseFloat($('bed').value) || 256);
+$('bed').onchange = () => showBed(num('bed'));
 $('dl').onclick = () => save(lastFile, lastName);
 $('file').onchange = async (e) => { const f = e.target.files[0]; if (f) { $('listtext').value = await f.text(); } };
 const drop = $('drop');

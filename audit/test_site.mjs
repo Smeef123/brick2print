@@ -211,6 +211,26 @@ try {
   check(e.parts === 6, `with spares: ${e.parts} pieces (want 6)`);
   await page.uncheck('#spares');
 
+  // 6b. other list headers and quantities: BrickLink's "Item No" column, colour names; a 0 quantity is skipped
+  await page.fill('#listtext', 'Item No,Color,Qty\n3001,Red,2\n3003,Yellow,0\n3024,White,3');
+  const bl = await build();
+  check(bl.parts === 5 && bl.unique === 2, `BrickLink header with colour names: ${bl.parts} pieces, ${bl.unique} parts (want 5, 2; the 0-quantity row skipped)`);
+  await page.fill('#listtext', 'Item No,Color,Qty\n3001,5,2');
+  const bln = await build();
+  check(/BrickLink/.test(bln.status) && bln.parts === 0, `BrickLink colour numbers are refused with a reason: "${bln.status}"`);
+  await page.fill('#listtext', 'Name,Amount\nBrick,2');
+  const np = await build();
+  check(/part column/i.test(np.status), `a header without a part column explains itself: "${np.status}"`);
+
+  // 6c. typed numbers outside the inputs' limits are clamped, not replaced by the defaults
+  await page.fill('#listtext', '3001,4,1');
+  await page.fill('#bed', '50'); await page.fill('#scale', '10'); await page.fill('#gap', '0');
+  await build();
+  const CL = await download('clamp');
+  check(CL.proj.cfg.printable_area?.join() === '0x0,100x0,100x100,0x100' && CL.proj.scales.join() === '0.5', `bed 50 -> ${CL.proj.cfg.printable_area?.[2] || 256}, scale 10% -> ${CL.proj.scales} (want 100x100, 0.5)`);
+  check(await page.inputValue('#gap') === '2', `gap 0 shows as ${await page.inputValue('#gap')} (want the minimum, 2)`);
+  await page.fill('#bed', '256'); await page.dispatchEvent('#bed', 'change'); await page.fill('#scale', '100'); await page.fill('#gap', '12');
+
   // 7. bad input says what to do
   await page.fill('#listtext', '');
   const bad = await build();
