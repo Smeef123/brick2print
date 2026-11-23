@@ -59,18 +59,40 @@ const own = (text) => text.replace('0 BFC CERTIFY CCW', `0 !LDRAW_ORG Primitive\
 const TUBE = own(tubeDat());
 const PRINT_PRIMITIVES = { 'stud.dat': own(studDat()), 'stud4.dat': TUBE, 'stud4a.dat': TUBE };
 const dataUrl = (text) => 'data:text/plain;charset=utf-8,' + encodeURIComponent(text);
-const loader = new LDrawLoader();
-loader.smoothNormals = false;   // only positions are used (the viewer computes its own normals); smoothing the merged studs of a 16x16 baseplate took 21 of its 23 s
-loader.manager.setURLModifier((url) => {
-  const m = /\/(?:parts|p)\/(stud(?:4a?)?\.dat)$/i.exec(url);
-  return m ? dataUrl(PRINT_PRIMITIVES[m[1].toLowerCase()]) : url;
-});
-loader.setPartsLibraryPath(LIB);
+let loader = null, materialsReady = null;
+// A fresh loader: three.js caches every file it parsed, a failed one too, so after a load error the old loader
+// would fail every later part using that file (box5.dat failing once failed 3001 for the rest of the visit).
+function newLoader() {
+  loader = new LDrawLoader();
+  loader.smoothNormals = false;   // only positions are used (the viewer computes its own normals); smoothing the merged studs of a 16x16 baseplate took 21 of its 23 s
+  loader.manager.setURLModifier((url) => {
+    const m = /\/(?:parts|p)\/(stud(?:4a?)?\.dat)$/i.exec(url);
+    return m ? dataUrl(PRINT_PRIMITIVES[m[1].toLowerCase()]) : url;
+  });
+  loader.setPartsLibraryPath(LIB);
+  materialsReady = null;
+}
+newLoader();
+const geomCache = new Map();
 
 /** Point at another copy of the LDraw library (the audit uses a local one). */
-export function setLibrary(url) { LIB = url; loader.setPartsLibraryPath(url); materialsReady = null; geomCache.clear(); }
-let materialsReady = null;
-const geomCache = new Map();
+export function setLibrary(url) { LIB = url; newLoader(); geomCache.clear(); }
+
+// Library requests that failed for a reason other than "no such file": LDraw's loader probes several folders
+// and expects 404s, but a 5xx or a dropped connection means the part may load fine next time.
+const libFailures = [];
+const realFetch = globalThis.fetch.bind(globalThis);
+globalThis.fetch = async (input, init) => {
+  const url = typeof input === 'string' ? input : input?.url || String(input);
+  try {
+    const r = await realFetch(input, init);
+    if (!r.ok && r.status !== 404 && url.startsWith(LIB)) libFailures.push(`${r.status} ${url.slice(LIB.length)}`);
+    return r;
+  } catch (e) {
+    if (url.startsWith(LIB)) libFailures.push(`${e.message} ${url.slice(LIB.length)}`);
+    throw e;
+  }
+};
 
 function candidates(id) {
   const base = id.toLowerCase().replace(/\.dat$/, '');
@@ -98,16 +120,21 @@ export async function loadPart(id, name = '') {
     if (!materialsReady) materialsReady = loader.preloadMaterials(LIB + 'LDConfig.ldr').catch(() => {});
     await materialsReady;
     for (const name of candidates(id)) {
-      const ok = await fetch(LIB + 'parts/' + name + '.dat', { method: 'HEAD' }).then((r) => r.ok).catch(() => false);
-      if (!ok) continue;
-      const group = await parseAsync(`0 Set2Print\n1 16 0 0 0 1 0 0 0 1 0 0 0 1 ${name}.dat\n`);
+      const r = await fetch(LIB + 'parts/' + name + '.dat', { method: 'HEAD' });   // a network error throws
+      if (r.status === 404) continue;
+      if (!r.ok) throw new Error(`the parts library answered ${r.status} for ${name}`);
+      const before = libFailures.length;
+      const group = await parseAsync(`0 Set2Print\n1 16 0 0 0 1 0 0 0 1 0 0 0 1 ${name}.dat\n`).catch((e) => { newLoader(); throw e; });
+      // three.js skips a sub-file that failed to download: the part would ship with pieces missing
+      if (libFailures.length > before) { newLoader(); throw new Error(`part of ${name} could not be downloaded (${libFailures[before]})`); }
       const mesh = toMesh(group);
-      if (!mesh.tris.length) continue; // a sub-file failed to load: treat as not found rather than ship an empty part
+      if (!mesh.tris.length) continue; // a sub-file missing from the library itself: treat as not found rather than ship an empty part
       return { name, mesh };
     }
     return null;
   })();
   geomCache.set(id, p);
+  p.catch(() => geomCache.delete(id));   // a failed load is tried again next time, not remembered as missing
   return p;
 }
 
